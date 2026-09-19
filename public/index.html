@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#9d1d20"><meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Pizza Ranch Digital Media Controller</title>
+  <link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/style.css">
+</head><body>
+  <main class="shell">
+    <header><div class="brand">PR</div><div><strong>Pizza Ranch</strong><span>Digital Media Controller</span></div></header>
+    <section class="card" id="login-card">
+      <h1>Management sign in</h1><p>Manage locations, screens, users, and content.</p>
+      <form id="login"><label>Email<input id="email" type="email" autocomplete="username" required></label>
+        <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
+        <button>Sign in</button><p id="message" role="alert"></p></form>
+    </section>
+    <section class="card hidden" id="app-card"><div class="row"><div><h1>Locations</h1><p id="identity"></p></div><button class="quiet" id="logout">Sign out</button></div><div id="locations"></div></section>
+    <footer><span id="status">Checking cloud service…</span></footer>
+  </main><script src="/app.js" defer></script>
+</body></html>

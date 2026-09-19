@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pizza-ranch-control",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-18",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pizza-ranch-control",
+      "database_id": "709994bc-3d93-4a9e-adc2-8baf30fd66b2",
+      "remote": true
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "pizza-ranch-media" },
+    { "binding": "QUARANTINE", "bucket_name": "pizza-ranch-quarantine" }
+  ]
+}
