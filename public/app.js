@@ -6,7 +6,7 @@ async function call(path, options = {}) {
   if (token) headers.authorization = `Bearer ${token}`;
   if (options.body) headers['content-type'] = 'application/json';
   const response = await fetch(path, { ...options, headers }); const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Request failed.'); return data;
+  if (!response.ok) { const error = new Error(data.error || 'Request failed.'); error.status = response.status; throw error; } return data;
 }
 function signedOut() { sessionStorage.removeItem(tokenKey); currentLocation = null; $('login-card').classList.remove('hidden'); $('password-card').classList.add('hidden'); $('app-card').classList.add('hidden'); }
 function sourceLabel(value) { return ({ menu:'Menu', ads:'Ads', funzone:'Funzone Ads', media:'Uploaded Media' })[value] || value; }
@@ -41,7 +41,10 @@ async function loadApp() {
     $('location-select').replaceChildren(...locations.map((location) => new Option(location.name, location.id)));
     $('login-card').classList.add('hidden'); $('password-card').classList.add('hidden'); $('app-card').classList.remove('hidden');
     if (locations.length) await loadLocation(currentLocation && locations.some((item) => item.id === currentLocation) ? currentLocation : locations[0].id);
-  } catch { signedOut(); }
+  } catch (error) {
+    if (error.status === 401) signedOut();
+    else { $('login-card').classList.add('hidden'); $('app-card').classList.remove('hidden'); $('status').textContent = `Dashboard error: ${error.message}`; }
+  }
 }
 $('login').addEventListener('submit', async (event) => { event.preventDefault(); $('message').textContent = 'Signing in…'; try { const result = await call('/api/auth/login', { method:'POST', body:JSON.stringify({ email:$('email').value, password:$('password').value }) }); sessionStorage.setItem(tokenKey, result.access_token); $('password').value = ''; $('message').textContent = ''; await loadApp(); } catch (error) { $('message').textContent = error.message; } });
 $('logout').addEventListener('click', signedOut);
