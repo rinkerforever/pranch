@@ -21,7 +21,14 @@
         <button>Save password</button><p id="password-message" role="alert"></p>
       </form>
     </section>
-    <section class="card hidden" id="app-card"><div class="row"><div><h1>Locations</h1><p id="identity"></p></div><button class="quiet" id="logout">Sign out</button></div><div id="locations"></div></section>
+    <section class="hidden" id="app-card">
+      <div class="card toolbar"><div><strong id="identity"></strong><span>Cloud administration</span></div><button class="quiet" id="logout">Sign out</button></div>
+      <div class="location-bar"><label>Location<select id="location-select"></select></label><span class="pill" id="location-role"></span></div>
+      <nav class="tabs" aria-label="Management sections"><button class="active" data-panel="displays-panel">Displays</button><button data-panel="pages-panel">Pages</button><button data-panel="users-panel">Users</button></nav>
+      <section class="card panel" id="displays-panel"><div class="row"><div><h1>TV displays</h1><p>Choose what each paired Raspberry Pi shows.</p></div><button class="small" id="add-display">Pair display</button></div><div id="pair-result" class="notice hidden"></div><div id="displays"></div></section>
+      <section class="card panel hidden" id="pages-panel"><h1>Page settings</h1><p>These addresses are sent to every paired display at this location.</p><form id="pages-form"><label>Menu page<input id="menu-url" type="url" required></label><label>Ads page<input id="ads-url" type="url" required></label><label>Funzone ads page<input id="funzone-url" type="url" required></label><button>Save page settings</button><p id="pages-message" role="status"></p></form></section>
+      <section class="card panel hidden" id="users-panel"><h1>User access</h1><p>System administrators can access every location. Location user invitations and role assignments are the next cloud module.</p></section>
+    </section>
     <footer><span id="status">Checking cloud service…</span></footer>
   </main><script src="/app.js" defer></script>
 </body></html>
