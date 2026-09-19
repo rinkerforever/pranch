@@ -52,6 +52,48 @@ function configured(env) {
   return Boolean(env.SUPABASE_URL && env.SUPABASE_PUBLISHABLE_KEY);
 }
 
+function systemAdmin(session) { return session.profile.global_role === 'system_admin'; }
+
+function slugify(value) {
+  return String(value || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+}
+
+function cleanAssignments(value) {
+  if (!Array.isArray(value)) return [];
+  const allowedRoles = new Set(['location_manager','operator','viewer']);
+  const allowedPermissions = new Set(['manage_displays','manage_pages','manage_content','manage_users']);
+  return value.map((item) => ({ location_id:String(item.location_id || ''), role:String(item.role || ''),
+    permissions:[...new Set(Array.isArray(item.permissions) ? item.permissions.filter((permission) => allowedPermissions.has(permission)) : [])] }))
+    .filter((item) => item.location_id && allowedRoles.has(item.role));
+}
+
+async function replaceAssignments(userId, assignments, env) {
+  const statements = [env.DB.prepare('DELETE FROM user_location_roles WHERE user_id=?').bind(userId)];
+  for (const item of assignments) statements.push(env.DB.prepare(`INSERT INTO user_location_roles(user_id,location_id,role,permissions_json)
+    VALUES(?,?,?,?)`).bind(userId,item.location_id,item.role,JSON.stringify(item.permissions)));
+  await env.DB.batch(statements);
+}
+
+async function inviteUser(request, session, env) {
+  if (!systemAdmin(session)) return json({ error:'System administrator access required.' },403);
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error:'User invitations are not configured yet.' },503);
+  let body; try { body = await request.json(); } catch { return json({ error:'Invalid request.' },400); }
+  const email = String(body.email || '').trim().toLowerCase(); const displayName = String(body.display_name || '').trim();
+  const assignments = cleanAssignments(body.assignments);
+  if (!email.includes('@') || displayName.length < 2 || displayName.length > 80) return json({ error:'Enter a valid email and display name.' },400);
+  if (!body.system_admin && !assignments.length) return json({ error:'Assign at least one location.' },400);
+  const response = await fetch(`${env.SUPABASE_URL.replace(/\/$/,'')}/auth/v1/invite?redirect_to=${encodeURIComponent(new URL(request.url).origin + '/accept-invite')}`, {
+    method:'POST', headers:{ 'content-type':'application/json', apikey:env.SUPABASE_SERVICE_ROLE_KEY,
+      authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` }, body:JSON.stringify({ email, data:{ display_name:displayName } }),
+  });
+  const invited = await response.json();
+  if (!response.ok) return json({ error:invited.msg || invited.message || 'Could not send the invitation.' },400);
+  await env.DB.prepare(`INSERT INTO user_profiles(id,auth_user_id,email,display_name,system_admin,active)
+    VALUES(?,?,?,?,?,1)`).bind(invited.id,invited.id,email,displayName,body.system_admin ? 1 : 0).run();
+  await replaceAssignments(invited.id,assignments,env);
+  return json({ ok:true, id:invited.id },201);
+}
+
 async function supabaseUser(request, env) {
   if (!configured(env)) return null;
   const authorization = request.headers.get('authorization') || '';
@@ -84,6 +126,17 @@ async function locationRole(session, locationId, env) {
   const row = await env.DB.prepare('SELECT * FROM user_location_roles WHERE user_id=? AND location_id=?')
     .bind(session.user.id, locationId).first();
   return row?.role || null;
+}
+
+async function hasLocationPermission(session, locationId, permission, env) {
+  if (systemAdmin(session)) return true;
+  const row = await env.DB.prepare('SELECT role,permissions_json FROM user_location_roles WHERE user_id=? AND location_id=?')
+    .bind(session.user.id,locationId).first();
+  if (!row) return false;
+  let permissions = []; try { permissions = JSON.parse(row.permissions_json || '[]'); } catch {}
+  const defaults = row.role === 'location_manager' ? ['manage_displays','manage_pages','manage_content','manage_users']
+    : row.role === 'operator' ? ['manage_displays','manage_content'] : [];
+  return permissions.includes(permission) || defaults.includes(permission);
 }
 
 async function locationSnapshot(session, locationId, env) {
@@ -194,7 +247,7 @@ async function api(request, env, url) {
   if (url.pathname.startsWith('/api/device/')) return deviceApi(request, env, url);
   const session = await requireUser(request, env);
   if (!session) return json({ error: 'Authentication required.' }, 401);
-  if (url.pathname === '/api/session') return json({ profile: session.profile });
+  if (url.pathname === '/api/session') return json({ profile: session.profile, userInvitesConfigured:Boolean(env.SUPABASE_SERVICE_ROLE_KEY) });
   if (url.pathname === '/api/locations' && request.method === 'GET') {
     const admin = session.profile.global_role === 'system_admin';
     const query = admin
@@ -203,6 +256,46 @@ async function api(request, env, url) {
           JOIN user_location_roles r ON r.location_id=l.id
           WHERE r.user_id=? AND l.active=1 ORDER BY l.name`).bind(session.user.id);
     return json({ locations: (await query.all()).results || [] });
+  }
+  if (url.pathname === '/api/locations' && request.method === 'POST') {
+    if (!systemAdmin(session)) return json({ error:'System administrator access required.' },403);
+    let body; try { body = await request.json(); } catch { return json({ error:'Invalid request.' },400); }
+    const name = String(body.name || '').trim(); let slug = slugify(body.slug || name);
+    if (name.length < 2 || name.length > 80 || slug.length < 2) return json({ error:'Enter a location name between 2 and 80 characters.' },400);
+    const duplicate = await env.DB.prepare('SELECT id FROM locations WHERE slug=? OR lower(name)=lower(?)').bind(slug,name).first();
+    if (duplicate) return json({ error:'A location with that name already exists.' },409);
+    const id = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO locations(id,name,slug,active) VALUES(?,?,?,1)').bind(id,name,slug),
+      env.DB.prepare(`INSERT INTO configuration_revisions(id,location_id,revision,configuration_json,created_by)
+        VALUES(?,?,1,?,?)`).bind(crypto.randomUUID(),id,JSON.stringify({ pages:pageDefaults }),session.profile.id),
+    ]);
+    return json({ id,name,slug,active:1 },201);
+  }
+  if (url.pathname === '/api/admin/users' && request.method === 'GET') {
+    if (!systemAdmin(session)) return json({ error:'System administrator access required.' },403);
+    const users = (await env.DB.prepare(`SELECT id,email,display_name,system_admin,active,created_at
+      FROM user_profiles ORDER BY display_name,email`).all()).results || [];
+    const roles = (await env.DB.prepare(`SELECT user_id,location_id,role,permissions_json FROM user_location_roles`).all()).results || [];
+    for (const user of users) user.assignments = roles.filter((role) => role.user_id === user.id).map((role) => {
+      let permissions = []; try { permissions = JSON.parse(role.permissions_json || '[]'); } catch {}
+      return { location_id:role.location_id, role:role.role, permissions };
+    });
+    return json({ users, invitationsConfigured:Boolean(env.SUPABASE_SERVICE_ROLE_KEY) });
+  }
+  if (url.pathname === '/api/admin/users' && request.method === 'POST') return inviteUser(request,session,env);
+  const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
+  if (userMatch && request.method === 'PATCH') {
+    if (!systemAdmin(session)) return json({ error:'System administrator access required.' },403);
+    let body; try { body = await request.json(); } catch { return json({ error:'Invalid request.' },400); }
+    const userId = decodeURIComponent(userMatch[1]); const displayName = String(body.display_name || '').trim();
+    if (displayName.length < 2 || displayName.length > 80) return json({ error:'Display name must be 2–80 characters.' },400);
+    if (userId === session.profile.id && (!body.active || !body.system_admin)) return json({ error:'You cannot disable or demote your own administrator account.' },400);
+    const assignments = cleanAssignments(body.assignments);
+    if (!body.system_admin && !assignments.length) return json({ error:'Assign at least one location.' },400);
+    await env.DB.prepare(`UPDATE user_profiles SET display_name=?,system_admin=?,active=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`)
+      .bind(displayName,body.system_admin ? 1 : 0,body.active ? 1 : 0,userId).run();
+    await replaceAssignments(userId,assignments,env); return json({ ok:true });
   }
   const match = url.pathname.match(/^\/api\/locations\/([^/]+)(?:\/(pages|displays))?(?:\/([^/]+))?$/);
   if (match) {
@@ -214,8 +307,16 @@ async function api(request, env, url) {
       const snapshot = await locationSnapshot(session, locationId, env);
       return snapshot ? json(snapshot) : json({ error: 'Location not found.' }, 404);
     }
+    if (!section && request.method === 'PATCH') {
+      if (!systemAdmin(session)) return json({ error:'System administrator access required.' },403);
+      let body; try { body = await request.json(); } catch { return json({ error:'Invalid request.' },400); }
+      const name = String(body.name || '').trim(); if (name.length < 2 || name.length > 80) return json({ error:'Location name must be 2–80 characters.' },400);
+      if (locationId === 'tyler' && !body.active) return json({ error:'The default Tyler location cannot be deactivated.' },400);
+      await env.DB.prepare(`UPDATE locations SET name=?,active=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`)
+        .bind(name,body.active ? 1 : 0,locationId).run(); return json({ ok:true });
+    }
     if (section === 'pages' && request.method === 'PUT') {
-      if (!['system_admin', 'location_manager'].includes(role)) return json({ error: 'Manager access required.' }, 403);
+      if (!await hasLocationPermission(session,locationId,'manage_pages',env)) return json({ error: 'Page-management permission required.' }, 403);
       let body; try { body = await request.json(); } catch { return json({ error: 'Invalid request.' }, 400); }
       const customPages = Array.isArray(body.custom_pages) ? body.custom_pages : [];
       if (customPages.length > 50) return json({ error: 'A location can have up to 50 custom pages.' }, 400);
@@ -236,7 +337,7 @@ async function api(request, env, url) {
       return json({ ok: true });
     }
     if (section === 'displays' && !itemId && request.method === 'POST') {
-      if (!['system_admin', 'location_manager'].includes(role)) return json({ error: 'Manager access required.' }, 403);
+      if (!await hasLocationPermission(session,locationId,'manage_displays',env)) return json({ error: 'Display-management permission required.' }, 403);
       let body; try { body = await request.json(); } catch { return json({ error: 'Invalid request.' }, 400); }
       const name = String(body.name || '').trim();
       if (name.length < 2 || name.length > 80) return json({ error: 'Display name must be 2–80 characters.' }, 400);
@@ -251,7 +352,7 @@ async function api(request, env, url) {
       return json({ id, pairing_code: code, expires_in: 900 }, 201);
     }
     if (section === 'displays' && itemId && request.method === 'PATCH') {
-      if (!['system_admin', 'location_manager', 'operator'].includes(role)) return json({ error: 'Display access denied.' }, 403);
+      if (!await hasLocationPermission(session,locationId,'manage_content',env)) return json({ error: 'Content-management permission required.' }, 403);
       let body; try { body = await request.json(); } catch { return json({ error: 'Invalid request.' }, 400); }
       const requestedSource = String(body.desired_source || '');
       if (!SOURCES.includes(requestedSource) && !requestedSource.startsWith('custom:')) return json({ error: 'Unknown content source.' }, 400);
@@ -270,7 +371,7 @@ async function api(request, env, url) {
       return json({ ok: true });
     }
     if (section === 'displays' && itemId && request.method === 'DELETE') {
-      if (!['system_admin', 'location_manager'].includes(role)) return json({ error: 'Manager access required.' }, 403);
+      if (!await hasLocationPermission(session,locationId,'manage_displays',env)) return json({ error: 'Display-management permission required.' }, 403);
       const row = await env.DB.prepare('SELECT device_id FROM screens WHERE id=? AND location_id=?').bind(itemId,locationId).first();
       if (row?.device_id) await env.DB.prepare(`UPDATE devices SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).bind(row.device_id).run();
       await env.DB.prepare(`UPDATE screens SET active=0,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND location_id=?`).bind(itemId,locationId).run();

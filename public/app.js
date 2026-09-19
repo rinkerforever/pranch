@@ -2,6 +2,9 @@ const $ = (id) => document.getElementById(id);
 const tokenKey = 'pranch-cloud-access';
 let currentLocation = null;
 let currentPages = { custom_pages:[] };
+let allLocations = [];
+let currentProfile = null;
+let invitationsConfigured = false;
 async function call(path, options = {}) {
   const token = sessionStorage.getItem(tokenKey); const headers = { ...(options.headers || {}) };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -46,20 +49,56 @@ function renderDisplays(displays) {
 }
 async function loadApp() {
   try {
-    const [{ profile }, { locations }] = await Promise.all([call('/api/session'), call('/api/locations')]);
+    const [{ profile, userInvitesConfigured }, { locations }] = await Promise.all([call('/api/session'), call('/api/locations')]);
+    currentProfile = profile; allLocations = locations; invitationsConfigured = userInvitesConfigured;
     $('identity').textContent = profile.display_name || profile.email;
     $('location-select').replaceChildren(...locations.map((location) => new Option(location.name, location.id)));
     $('login-card').classList.add('hidden'); $('password-card').classList.add('hidden'); $('app-card').classList.remove('hidden');
+    $('add-location').classList.toggle('hidden',profile.global_role !== 'system_admin'); $('add-user').classList.toggle('hidden',profile.global_role !== 'system_admin');
     if (locations.length) await loadLocation(currentLocation && locations.some((item) => item.id === currentLocation) ? currentLocation : locations[0].id);
+    if (profile.global_role === 'system_admin') await loadUsers();
   } catch (error) {
     if (error.status === 401) signedOut();
     else { $('login-card').classList.add('hidden'); $('app-card').classList.remove('hidden'); $('status').textContent = `Dashboard error: ${error.message}`; }
   }
 }
+
+function permissionDefaults(role) { return role === 'location_manager' ? ['manage_displays','manage_pages','manage_content','manage_users'] : role === 'operator' ? ['manage_displays','manage_content'] : []; }
+function renderUserLocations(assignments = []) {
+  $('user-locations').replaceChildren(...allLocations.map((location) => {
+    const saved = assignments.find((item) => item.location_id === location.id); const box = document.createElement('fieldset'); box.className = 'assignment'; box.dataset.locationId = location.id;
+    const legend = document.createElement('legend'); const enabled = document.createElement('input'); enabled.type = 'checkbox'; enabled.className = 'assignment-enabled'; enabled.checked = Boolean(saved); legend.append(enabled,document.createTextNode(` ${location.name}`));
+    const roleLabel = document.createElement('label'); roleLabel.textContent = 'Role'; const role = document.createElement('select'); role.className = 'assignment-role'; ['location_manager','operator','viewer'].forEach((value) => role.add(new Option(value.replaceAll('_',' '),value))); role.value = saved?.role || 'operator'; roleLabel.append(role);
+    const permissions = document.createElement('div'); permissions.className = 'permission-grid';
+    [['manage_displays','Pair/remove displays'],['manage_pages','Edit page addresses'],['manage_content','Change TV content'],['manage_users','Manage location users']].forEach(([value,label]) => { const item = document.createElement('label'); item.className = 'check'; const check = document.createElement('input'); check.type = 'checkbox'; check.value = value; check.checked = (saved?.permissions || permissionDefaults(role.value)).includes(value); item.append(check,document.createTextNode(` ${label}`)); permissions.append(item); });
+    role.onchange = () => { const defaults = permissionDefaults(role.value); permissions.querySelectorAll('input').forEach((input) => { input.checked = defaults.includes(input.value); }); };
+    const toggle = () => { role.disabled = !enabled.checked; permissions.querySelectorAll('input').forEach((input) => { input.disabled = !enabled.checked; }); }; enabled.onchange = toggle; toggle(); box.append(legend,roleLabel,permissions); return box;
+  }));
+}
+function userAssignments() { return [...document.querySelectorAll('.assignment')].filter((box) => box.querySelector('.assignment-enabled').checked).map((box) => ({ location_id:box.dataset.locationId, role:box.querySelector('.assignment-role').value, permissions:[...box.querySelectorAll('.permission-grid input:checked')].map((input) => input.value) })); }
+async function loadUsers() {
+  const data = await call('/api/admin/users'); invitationsConfigured = data.invitationsConfigured;
+  $('invite-warning').classList.toggle('hidden',invitationsConfigured);
+  $('users').replaceChildren(...data.users.map((user) => {
+    const row = document.createElement('div'); row.className = 'user-row'; const info = document.createElement('div');
+    const name = document.createElement('strong'); name.textContent = user.display_name; const detail = document.createElement('span'); detail.textContent = `${user.email} · ${user.system_admin ? 'system administrator' : `${user.assignments.length} location${user.assignments.length === 1 ? '' : 's'}`} · ${user.active ? 'active' : 'disabled'}`; info.append(name,detail);
+    const edit = document.createElement('button'); edit.className = 'quiet small'; edit.textContent = 'Edit'; edit.onclick = () => openUser(user); row.append(info,edit); return row;
+  }));
+}
+function openUser(user = null) {
+  $('user-form').reset(); $('user-id').value = user?.id || ''; $('user-title').textContent = user ? 'Edit user' : 'Add user'; $('user-email').value = user?.email || ''; $('user-email').disabled = Boolean(user); $('user-name').value = user?.display_name || ''; $('user-admin').checked = Boolean(user?.system_admin); $('user-active').checked = user ? Boolean(user.active) : true; $('user-message').textContent = '';
+  renderUserLocations(user?.assignments || []); $('user-locations').classList.toggle('disabled',$('user-admin').checked); $('user-dialog').showModal();
+}
 $('login').addEventListener('submit', async (event) => { event.preventDefault(); $('message').textContent = 'Signing in…'; try { const result = await call('/api/auth/login', { method:'POST', body:JSON.stringify({ email:$('email').value, password:$('password').value }) }); sessionStorage.setItem(tokenKey, result.access_token); $('password').value = ''; $('message').textContent = ''; await loadApp(); } catch (error) { $('message').textContent = error.message; } });
 $('logout').addEventListener('click', signedOut);
 $('location-select').addEventListener('change', () => loadLocation($('location-select').value).catch((error) => alert(error.message)));
 document.querySelectorAll('.tabs button').forEach((button) => button.onclick = () => { document.querySelectorAll('.tabs button').forEach((item) => item.classList.toggle('active', item === button)); document.querySelectorAll('.panel').forEach((panel) => panel.classList.toggle('hidden', panel.id !== button.dataset.panel)); });
+$('add-location').addEventListener('click', () => { $('location-form').reset(); $('location-message').textContent = ''; $('location-dialog').showModal(); });
+$('location-form').addEventListener('submit', async (event) => { event.preventDefault(); $('location-message').textContent = 'Creating…'; try { const location = await call('/api/locations',{ method:'POST',body:JSON.stringify({ name:$('location-name').value }) }); $('location-dialog').close(); currentLocation = location.id; await loadApp(); } catch (error) { $('location-message').textContent = error.message; } });
+$('add-user').addEventListener('click', () => { if (!invitationsConfigured) { $('invite-warning').classList.remove('hidden'); return; } openUser(); });
+$('user-admin').addEventListener('change', () => { $('user-locations').classList.toggle('disabled',$('user-admin').checked); });
+$('user-form').addEventListener('submit', async (event) => { event.preventDefault(); $('user-message').textContent = 'Saving…'; const id = $('user-id').value; const admin = $('user-admin').checked; const body = { email:$('user-email').value, display_name:$('user-name').value, system_admin:admin, active:$('user-active').checked, assignments:admin ? [] : userAssignments() }; try { await call(id ? `/api/admin/users/${encodeURIComponent(id)}` : '/api/admin/users',{ method:id ? 'PATCH' : 'POST',body:JSON.stringify(body) }); $('user-dialog').close(); await loadUsers(); } catch (error) { $('user-message').textContent = error.message; } });
+document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click',() => $(button.dataset.close).close()));
 $('add-page').addEventListener('click', () => { currentPages.custom_pages.push({ id:crypto.randomUUID(), name:'', url:'https://' }); renderCustomPages(); $('custom-pages').lastElementChild?.querySelector('input')?.focus(); });
 $('pages-form').addEventListener('submit', async (event) => { event.preventDefault(); $('pages-message').textContent = 'Saving…'; try { await call(`/api/locations/${encodeURIComponent(currentLocation)}/pages`, { method:'PUT', body:JSON.stringify({ menu_url:$('menu-url').value, ads_url:$('ads-url').value, funzone_url:$('funzone-url').value, custom_pages:currentPages.custom_pages }) }); $('pages-message').textContent = 'Page settings saved.'; await loadLocation(currentLocation); } catch (error) { $('pages-message').textContent = error.message; } });
 $('add-display').addEventListener('click', async () => { const name = prompt('Name this TV display (for example, Dining Room Menu)'); if (!name) return; try { const result = await call(`/api/locations/${encodeURIComponent(currentLocation)}/displays`, { method:'POST', body:JSON.stringify({ name }) }); $('pair-result').classList.remove('hidden'); $('pair-result').textContent = `Pairing code: ${result.pairing_code}. Enter it on the Raspberry Pi within 15 minutes.`; await loadLocation(currentLocation); } catch (error) { alert(error.message); } });
