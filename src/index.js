@@ -62,11 +62,34 @@ async function login(request, env) {
     expires_in: result.expires_in, profile });
 }
 
+async function updatePassword(request, env) {
+  if (!configured(env)) return json({ error: 'Authentication is not configured yet.' }, 503);
+  const authorization = request.headers.get('authorization') || '';
+  if (!authorization.startsWith('Bearer ')) return json({ error: 'The invitation or reset link is invalid.' }, 401);
+  let body;
+  try { body = await request.json(); } catch { return json({ error: 'Invalid request.' }, 400); }
+  const password = String(body.password || '');
+  if (password.length < 12 || password.length > 128) {
+    return json({ error: 'Use a password between 12 and 128 characters.' }, 400);
+  }
+  const response = await fetch(`${env.SUPABASE_URL.replace(/\/$/, '')}/auth/v1/user`, {
+    method: 'PUT',
+    headers: { authorization, apikey: env.SUPABASE_PUBLISHABLE_KEY, 'content-type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (!response.ok) return json({ error: 'This invitation or reset link has expired. Request a new link.' }, 401);
+  const user = await response.json();
+  const profile = await profileFor(user, env);
+  if (!profile) return json({ error: 'This account has not been activated for Pizza Ranch.' }, 403);
+  return json({ profile });
+}
+
 async function api(request, env, url) {
   if (url.pathname === '/api/health') {
     return json({ ok: true, service: 'pizza-ranch-control', authConfigured: configured(env) });
   }
   if (url.pathname === '/api/auth/login' && request.method === 'POST') return login(request, env);
+  if (url.pathname === '/api/auth/password' && request.method === 'POST') return updatePassword(request, env);
   const session = await requireUser(request, env);
   if (!session) return json({ error: 'Authentication required.' }, 401);
   if (url.pathname === '/api/session') return json({ profile: session.profile });
