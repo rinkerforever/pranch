@@ -17,6 +17,7 @@ const pageDefaults = {
   menu_url: 'https://green-forest-07f346210.6.azurestaticapps.net/8300?type=menu-only',
   ads_url: 'https://green-forest-07f346210.6.azurestaticapps.net/8300?type=ads-only',
   funzone_url: 'https://green-forest-07f346210.6.azurestaticapps.net/8300?type=funzone-ads',
+  custom_pages: [],
 };
 
 function validPageUrl(value) {
@@ -35,7 +36,11 @@ async function pagesFor(locationId, env) {
   try { return { ...pageDefaults, ...(JSON.parse(row.configuration_json).pages || {}) }; } catch { return pageDefaults; }
 }
 
-function publicSource(sourceType) {
+function publicSource(sourceType, sourceValue, pages = pageDefaults) {
+  if (sourceType === 'custom_url') {
+    const custom = (pages.custom_pages || []).find((page) => page.url === sourceValue);
+    return custom ? `custom:${custom.id}` : 'menu';
+  }
   return ({ menu:'menu', ads:'ads', funzone_ads:'funzone', playlist:'media' })[sourceType] || 'menu';
 }
 
@@ -87,14 +92,14 @@ async function locationSnapshot(session, locationId, env) {
   const location = await env.DB.prepare('SELECT id,name,slug,active FROM locations WHERE id=? AND active=1').bind(locationId).first();
   if (!location) return null;
   const pages = await pagesFor(locationId, env);
-  const rows = (await env.DB.prepare(`SELECT s.id,s.name,s.device_id,d.last_seen_at,d.status_json,a.source_type,
+  const rows = (await env.DB.prepare(`SELECT s.id,s.name,s.device_id,d.last_seen_at,d.status_json,a.source_type,a.source_value,
     CASE WHEN e.used_at IS NULL AND e.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now') THEN 1 ELSE 0 END pending
     FROM screens s LEFT JOIN devices d ON d.id=s.device_id AND d.revoked_at IS NULL
     LEFT JOIN screen_assignments a ON a.screen_id=s.id LEFT JOIN enrollment_codes e ON e.id=s.id
     WHERE s.location_id=? AND s.active=1 ORDER BY s.name`).bind(locationId).all()).results || [];
   const displays = rows.map((row) => {
     let status = {}; try { status = JSON.parse(row.status_json || '{}'); } catch {}
-    return { id:row.id, name:row.name, desired_source:publicSource(row.source_type),
+    return { id:row.id, name:row.name, desired_source:publicSource(row.source_type,row.source_value,pages),
       reported_source:status.reported_source || null, last_seen:row.last_seen_at, pending:row.pending };
   });
   return { location, role, pages, displays };
@@ -120,7 +125,7 @@ async function deviceApi(request, env, url) {
   }
   const token = (request.headers.get('authorization') || '').replace(/^Device\s+/i, '');
   if (!token) return json({ error: 'Device authentication required.' }, 401);
-  const display = await env.DB.prepare(`SELECT d.id device_id,d.location_id,s.id screen_id,a.source_type
+  const display = await env.DB.prepare(`SELECT d.id device_id,d.location_id,s.id screen_id,a.source_type,a.source_value
     FROM devices d JOIN screens s ON s.device_id=d.id LEFT JOIN screen_assignments a ON a.screen_id=s.id
     WHERE d.credential_hash=? AND d.revoked_at IS NULL AND s.active=1`).bind(await sha256(token)).first();
   if (!display) return json({ error: 'Device authentication failed.' }, 401);
@@ -131,8 +136,9 @@ async function deviceApi(request, env, url) {
       updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).bind(JSON.stringify({ reported_source:reported }),display.device_id).run();
   }
   if (url.pathname === '/api/device/state') {
+    const pages = await pagesFor(display.location_id,env);
     return json({ device_id:display.device_id, screen_id:display.screen_id, location_id:display.location_id,
-      desired_source:publicSource(display.source_type), pages:await pagesFor(display.location_id,env) });
+      desired_source:publicSource(display.source_type,display.source_value,pages), pages });
   }
   return json({ error: 'Not found.' }, 404);
 }
@@ -211,11 +217,22 @@ async function api(request, env, url) {
     if (section === 'pages' && request.method === 'PUT') {
       if (!['system_admin', 'location_manager'].includes(role)) return json({ error: 'Manager access required.' }, 403);
       let body; try { body = await request.json(); } catch { return json({ error: 'Invalid request.' }, 400); }
-      if (![body.menu_url, body.ads_url, body.funzone_url].every(validPageUrl)) return json({ error: 'All page addresses must be valid HTTPS URLs.' }, 400);
+      const customPages = Array.isArray(body.custom_pages) ? body.custom_pages : [];
+      if (customPages.length > 50) return json({ error: 'A location can have up to 50 custom pages.' }, 400);
+      const cleanCustom = customPages.map((page) => ({ id:String(page.id || crypto.randomUUID()).slice(0,80), name:String(page.name || '').trim(), url:String(page.url || '').trim() }));
+      if (![body.menu_url, body.ads_url, body.funzone_url].every(validPageUrl) || cleanCustom.some((page) => page.name.length < 1 || page.name.length > 80 || !validPageUrl(page.url))) return json({ error: 'Every page needs a name and valid HTTPS address.' }, 400);
+      if (new Set(cleanCustom.map((page) => page.id)).size !== cleanCustom.length) return json({ error: 'Custom page identifiers must be unique.' }, 400);
+      const previousPages = await pagesFor(locationId,env);
       const current = await env.DB.prepare('SELECT COALESCE(MAX(revision),0) revision FROM configuration_revisions WHERE location_id=?').bind(locationId).first();
       await env.DB.prepare(`INSERT INTO configuration_revisions(id,location_id,revision,configuration_json,created_by)
         VALUES(?,?,?,?,?)`).bind(crypto.randomUUID(),locationId,current.revision+1,
-        JSON.stringify({ pages:{ menu_url:body.menu_url, ads_url:body.ads_url, funzone_url:body.funzone_url } }),session.profile.id).run();
+        JSON.stringify({ pages:{ menu_url:body.menu_url, ads_url:body.ads_url, funzone_url:body.funzone_url, custom_pages:cleanCustom } }),session.profile.id).run();
+      const retainedUrls = new Set(cleanCustom.map((page) => page.url));
+      for (const removed of (previousPages.custom_pages || []).filter((page) => !retainedUrls.has(page.url))) {
+        await env.DB.prepare(`UPDATE screen_assignments SET source_type='menu',source_value=?,desired_revision=desired_revision+1,
+          updated_by=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE source_type='custom_url' AND source_value=?
+          AND screen_id IN (SELECT id FROM screens WHERE location_id=?)`).bind(body.menu_url,session.profile.id,removed.url,locationId).run();
+      }
       return json({ ok: true });
     }
     if (section === 'displays' && !itemId && request.method === 'POST') {
@@ -236,11 +253,16 @@ async function api(request, env, url) {
     if (section === 'displays' && itemId && request.method === 'PATCH') {
       if (!['system_admin', 'location_manager', 'operator'].includes(role)) return json({ error: 'Display access denied.' }, 403);
       let body; try { body = await request.json(); } catch { return json({ error: 'Invalid request.' }, 400); }
-      if (!SOURCES.includes(body.desired_source)) return json({ error: 'Unknown content source.' }, 400);
+      const requestedSource = String(body.desired_source || '');
+      if (!SOURCES.includes(requestedSource) && !requestedSource.startsWith('custom:')) return json({ error: 'Unknown content source.' }, 400);
       const screen = await env.DB.prepare('SELECT id FROM screens WHERE id=? AND location_id=? AND active=1').bind(itemId,locationId).first();
       if (!screen) return json({ error: 'Display not found.' }, 404);
-      const pages = await pagesFor(locationId,env); const type = databaseSource(body.desired_source);
-      const value = ({ menu:pages.menu_url, ads:pages.ads_url, funzone:pages.funzone_url, media:'' })[body.desired_source];
+      const pages = await pagesFor(locationId,env); let type; let value;
+      if (requestedSource.startsWith('custom:')) {
+        const page = (pages.custom_pages || []).find((item) => item.id === requestedSource.slice(7));
+        if (!page) return json({ error: 'Custom page not found.' }, 400);
+        type = 'custom_url'; value = page.url;
+      } else { type = databaseSource(requestedSource); value = ({ menu:pages.menu_url, ads:pages.ads_url, funzone:pages.funzone_url, media:'' })[requestedSource]; }
       await env.DB.prepare(`INSERT INTO screen_assignments(screen_id,source_type,source_value,desired_revision,updated_by)
         VALUES(?,?,?,?,?) ON CONFLICT(screen_id) DO UPDATE SET source_type=excluded.source_type,source_value=excluded.source_value,
         desired_revision=screen_assignments.desired_revision+1,updated_by=excluded.updated_by,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
