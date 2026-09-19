@@ -32,5 +32,30 @@ $('login').addEventListener('submit', async (event) => {
   } catch (error) { $('message').textContent = error.message; }
 });
 $('logout').addEventListener('click', signedOut);
+$('password-setup').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const password = $('new-password').value;
+  $('password-message').textContent = 'Saving password…';
+  if (password !== $('confirm-password').value) {
+    $('password-message').textContent = 'The passwords do not match.'; return;
+  }
+  try {
+    await call('/api/auth/password', { method: 'POST', body: JSON.stringify({ password }) });
+    history.replaceState(null, '', '/');
+    $('new-password').value = ''; $('confirm-password').value = '';
+    $('password-card').classList.add('hidden');
+    await loadApp();
+  } catch (error) { $('password-message').textContent = error.message; }
+});
 call('/api/health').then((health) => { $('status').textContent = health.authConfigured ? 'Cloud service online' : 'Cloud service online · authentication setup pending'; }).catch(() => { $('status').textContent = 'Cloud service unavailable'; });
-if (sessionStorage.getItem(tokenKey)) loadApp();
+const invite = new URLSearchParams(location.hash.slice(1));
+const inviteToken = invite.get('access_token');
+const inviteType = invite.get('type');
+if (invite.get('error_description')) {
+  $('message').textContent = invite.get('error_description');
+  history.replaceState(null, '', '/');
+} else if (inviteToken && (inviteType === 'invite' || inviteType === 'recovery')) {
+  sessionStorage.setItem(tokenKey, inviteToken);
+  $('login-card').classList.add('hidden'); $('app-card').classList.add('hidden'); $('password-card').classList.remove('hidden');
+  if (inviteType === 'recovery') $('password-title').textContent = 'Reset your password';
+} else if (sessionStorage.getItem(tokenKey)) loadApp();
