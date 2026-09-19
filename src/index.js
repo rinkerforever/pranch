@@ -28,10 +28,12 @@ async function supabaseUser(request, env) {
 
 async function profileFor(user, env) {
   if (!user) return null;
-  return env.DB.prepare(`
-    SELECT id, email, display_name, global_role, active
-    FROM user_profiles WHERE id = ? AND active = 1
+  const profile = await env.DB.prepare(`
+    SELECT id, auth_user_id, email, display_name, system_admin, active
+    FROM user_profiles WHERE auth_user_id = ? AND active = 1
   `).bind(user.id).first();
+  if (profile) profile.global_role = profile.system_admin ? 'system_admin' : 'location_user';
+  return profile;
 }
 
 async function requireUser(request, env) {

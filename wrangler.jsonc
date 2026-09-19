@@ -6,7 +6,12 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "vars": {
+    "SUPABASE_URL": "https://ouchrveuiqhzkkyjdhau.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im91Y2hydmV1aXFoemtreWpkaGF1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk3NzU4MDYsImV4cCI6MjEwNTM1MTgwNn0.q9aBhlfMY0NmO92UN9DagUgurAB91So1pnp563iIUJQ"
   },
   "d1_databases": [
     {
