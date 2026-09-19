@@ -12,25 +12,6 @@ const securityHeaders = {
 };
 
 const SOURCES = ['menu', 'ads', 'funzone', 'media'];
-let schemaReady;
-
-function ensureSchema(env) {
-  if (!schemaReady) schemaReady = env.DB.exec(`
-    CREATE TABLE IF NOT EXISTS location_pages (
-      location_id TEXT PRIMARY KEY, menu_url TEXT NOT NULL, ads_url TEXT NOT NULL,
-      funzone_url TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS displays (
-      id TEXT PRIMARY KEY, location_id TEXT NOT NULL, name TEXT NOT NULL,
-      desired_source TEXT NOT NULL DEFAULT 'menu', reported_source TEXT,
-      pairing_code TEXT, pairing_expires_at TEXT, device_token_hash TEXT,
-      last_seen TEXT, active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS displays_location_idx ON displays(location_id);
-  `);
-  return schemaReady;
-}
 
 const pageDefaults = {
   menu_url: 'https://green-forest-07f346210.6.azurestaticapps.net/8300?type=menu-only',
@@ -45,6 +26,21 @@ function validPageUrl(value) {
 async function sha256(value) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return [...new Uint8Array(bytes)].map((part) => part.toString(16).padStart(2, '0')).join('');
+}
+
+async function pagesFor(locationId, env) {
+  const row = await env.DB.prepare(`SELECT configuration_json FROM configuration_revisions
+    WHERE location_id=? ORDER BY revision DESC LIMIT 1`).bind(locationId).first();
+  if (!row) return pageDefaults;
+  try { return { ...pageDefaults, ...(JSON.parse(row.configuration_json).pages || {}) }; } catch { return pageDefaults; }
+}
+
+function publicSource(sourceType) {
+  return ({ menu:'menu', ads:'ads', funzone_ads:'funzone', playlist:'media' })[sourceType] || 'menu';
+}
+
+function databaseSource(source) {
+  return ({ menu:'menu', ads:'ads', funzone:'funzone_ads', media:'playlist' })[source];
 }
 
 function configured(env) {
@@ -88,46 +84,55 @@ async function locationRole(session, locationId, env) {
 async function locationSnapshot(session, locationId, env) {
   const role = await locationRole(session, locationId, env);
   if (!role) return null;
-  await ensureSchema(env);
   const location = await env.DB.prepare('SELECT id,name,slug,active FROM locations WHERE id=? AND active=1').bind(locationId).first();
   if (!location) return null;
-  let pages = await env.DB.prepare('SELECT menu_url,ads_url,funzone_url,updated_at FROM location_pages WHERE location_id=?').bind(locationId).first();
-  if (!pages) {
-    pages = pageDefaults;
-    await env.DB.prepare('INSERT INTO location_pages(location_id,menu_url,ads_url,funzone_url) VALUES(?,?,?,?)')
-      .bind(locationId, pages.menu_url, pages.ads_url, pages.funzone_url).run();
-  }
-  const displays = (await env.DB.prepare(`SELECT id,name,desired_source,reported_source,last_seen,
-    CASE WHEN pairing_code IS NOT NULL AND pairing_expires_at > CURRENT_TIMESTAMP THEN 1 ELSE 0 END pending
-    FROM displays WHERE location_id=? AND active=1 ORDER BY name`).bind(locationId).all()).results || [];
+  const pages = await pagesFor(locationId, env);
+  const rows = (await env.DB.prepare(`SELECT s.id,s.name,s.device_id,d.last_seen_at,d.status_json,a.source_type,
+    CASE WHEN e.used_at IS NULL AND e.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now') THEN 1 ELSE 0 END pending
+    FROM screens s LEFT JOIN devices d ON d.id=s.device_id AND d.revoked_at IS NULL
+    LEFT JOIN screen_assignments a ON a.screen_id=s.id LEFT JOIN enrollment_codes e ON e.id=s.id
+    WHERE s.location_id=? AND s.active=1 ORDER BY s.name`).bind(locationId).all()).results || [];
+  const displays = rows.map((row) => {
+    let status = {}; try { status = JSON.parse(row.status_json || '{}'); } catch {}
+    return { id:row.id, name:row.name, desired_source:publicSource(row.source_type),
+      reported_source:status.reported_source || null, last_seen:row.last_seen_at, pending:row.pending };
+  });
   return { location, role, pages, displays };
 }
 
 async function deviceApi(request, env, url) {
-  await ensureSchema(env);
   if (url.pathname === '/api/device/pair' && request.method === 'POST') {
     let body; try { body = await request.json(); } catch { return json({ error: 'Invalid request.' }, 400); }
     const code = String(body.code || '').replace(/\D/g, '');
-    const row = await env.DB.prepare(`SELECT id,location_id FROM displays
-      WHERE pairing_code=? AND pairing_expires_at > CURRENT_TIMESTAMP AND active=1`).bind(code).first();
+    const row = await env.DB.prepare(`SELECT e.id,s.location_id,s.name FROM enrollment_codes e JOIN screens s ON s.id=e.id
+      WHERE e.code_hash=? AND e.used_at IS NULL AND e.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now') AND s.active=1`)
+      .bind(await sha256(code)).first();
     if (!row) return json({ error: 'Pairing code is invalid or expired.' }, 400);
     const token = `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll('-', '');
-    await env.DB.prepare(`UPDATE displays SET device_token_hash=?,pairing_code=NULL,pairing_expires_at=NULL,last_seen=CURRENT_TIMESTAMP
-      WHERE id=?`).bind(await sha256(token), row.id).run();
-    return json({ device_id: row.id, device_token: token, location_id: row.location_id });
+    const deviceId = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO devices(id,location_id,name,device_type,credential_hash,last_seen_at)
+        VALUES(?,?,?,'display',?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).bind(deviceId,row.location_id,row.name,await sha256(token)),
+      env.DB.prepare(`UPDATE screens SET device_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).bind(deviceId,row.id),
+      env.DB.prepare(`UPDATE enrollment_codes SET used_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).bind(row.id),
+    ]);
+    return json({ device_id: deviceId, screen_id: row.id, device_token: token, location_id: row.location_id });
   }
   const token = (request.headers.get('authorization') || '').replace(/^Device\s+/i, '');
   if (!token) return json({ error: 'Device authentication required.' }, 401);
-  const display = await env.DB.prepare('SELECT * FROM displays WHERE device_token_hash=? AND active=1').bind(await sha256(token)).first();
+  const display = await env.DB.prepare(`SELECT d.id device_id,d.location_id,s.id screen_id,a.source_type
+    FROM devices d JOIN screens s ON s.device_id=d.id LEFT JOIN screen_assignments a ON a.screen_id=s.id
+    WHERE d.credential_hash=? AND d.revoked_at IS NULL AND s.active=1`).bind(await sha256(token)).first();
   if (!display) return json({ error: 'Device authentication failed.' }, 401);
   if (url.pathname === '/api/device/state' && request.method === 'POST') {
     let body; try { body = await request.json(); } catch { return json({ error: 'Invalid request.' }, 400); }
-    const reported = SOURCES.includes(body.reported_source) ? body.reported_source : display.reported_source;
-    await env.DB.prepare('UPDATE displays SET reported_source=?,last_seen=CURRENT_TIMESTAMP WHERE id=?').bind(reported, display.id).run();
+    const reported = SOURCES.includes(body.reported_source) ? body.reported_source : null;
+    await env.DB.prepare(`UPDATE devices SET status_json=?,last_seen_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+      updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).bind(JSON.stringify({ reported_source:reported }),display.device_id).run();
   }
   if (url.pathname === '/api/device/state') {
-    const pages = await env.DB.prepare('SELECT menu_url,ads_url,funzone_url FROM location_pages WHERE location_id=?').bind(display.location_id).first();
-    return json({ device_id: display.id, location_id: display.location_id, desired_source: display.desired_source, pages: pages || pageDefaults });
+    return json({ device_id:display.device_id, screen_id:display.screen_id, location_id:display.location_id,
+      desired_source:publicSource(display.source_type), pages:await pagesFor(display.location_id,env) });
   }
   return json({ error: 'Not found.' }, 404);
 }
@@ -199,7 +204,6 @@ async function api(request, env, url) {
     const section = match[2]; const itemId = match[3] && decodeURIComponent(match[3]);
     const role = await locationRole(session, locationId, env);
     if (!role) return json({ error: 'Location access denied.' }, 403);
-    await ensureSchema(env);
     if (!section && request.method === 'GET') {
       const snapshot = await locationSnapshot(session, locationId, env);
       return snapshot ? json(snapshot) : json({ error: 'Location not found.' }, 404);
@@ -208,9 +212,10 @@ async function api(request, env, url) {
       if (!['system_admin', 'location_manager'].includes(role)) return json({ error: 'Manager access required.' }, 403);
       let body; try { body = await request.json(); } catch { return json({ error: 'Invalid request.' }, 400); }
       if (![body.menu_url, body.ads_url, body.funzone_url].every(validPageUrl)) return json({ error: 'All page addresses must be valid HTTPS URLs.' }, 400);
-      await env.DB.prepare(`INSERT INTO location_pages(location_id,menu_url,ads_url,funzone_url,updated_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP)
-        ON CONFLICT(location_id) DO UPDATE SET menu_url=excluded.menu_url,ads_url=excluded.ads_url,funzone_url=excluded.funzone_url,updated_at=CURRENT_TIMESTAMP`)
-        .bind(locationId, body.menu_url, body.ads_url, body.funzone_url).run();
+      const current = await env.DB.prepare('SELECT COALESCE(MAX(revision),0) revision FROM configuration_revisions WHERE location_id=?').bind(locationId).first();
+      await env.DB.prepare(`INSERT INTO configuration_revisions(id,location_id,revision,configuration_json,created_by)
+        VALUES(?,?,?,?,?)`).bind(crypto.randomUUID(),locationId,current.revision+1,
+        JSON.stringify({ pages:{ menu_url:body.menu_url, ads_url:body.ads_url, funzone_url:body.funzone_url } }),session.profile.id).run();
       return json({ ok: true });
     }
     if (section === 'displays' && !itemId && request.method === 'POST') {
@@ -219,20 +224,34 @@ async function api(request, env, url) {
       const name = String(body.name || '').trim();
       if (name.length < 2 || name.length > 80) return json({ error: 'Display name must be 2–80 characters.' }, 400);
       const id = crypto.randomUUID(); const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0');
-      await env.DB.prepare(`INSERT INTO displays(id,location_id,name,pairing_code,pairing_expires_at)
-        VALUES(?,?,?,?,datetime('now','+15 minutes'))`).bind(id, locationId, name, code).run();
+      await env.DB.batch([
+        env.DB.prepare('INSERT INTO screens(id,location_id,name) VALUES(?,?,?)').bind(id,locationId,name),
+        env.DB.prepare(`INSERT INTO enrollment_codes(id,code_hash,requested_device_name,expires_at)
+          VALUES(?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now','+15 minutes'))`).bind(id,await sha256(code),name),
+        env.DB.prepare(`INSERT INTO screen_assignments(screen_id,source_type,source_value,desired_revision,updated_by)
+          VALUES(?,'menu','',1,?)`).bind(id,session.profile.id),
+      ]);
       return json({ id, pairing_code: code, expires_in: 900 }, 201);
     }
     if (section === 'displays' && itemId && request.method === 'PATCH') {
       if (!['system_admin', 'location_manager', 'operator'].includes(role)) return json({ error: 'Display access denied.' }, 403);
       let body; try { body = await request.json(); } catch { return json({ error: 'Invalid request.' }, 400); }
       if (!SOURCES.includes(body.desired_source)) return json({ error: 'Unknown content source.' }, 400);
-      await env.DB.prepare('UPDATE displays SET desired_source=? WHERE id=? AND location_id=? AND active=1').bind(body.desired_source, itemId, locationId).run();
+      const screen = await env.DB.prepare('SELECT id FROM screens WHERE id=? AND location_id=? AND active=1').bind(itemId,locationId).first();
+      if (!screen) return json({ error: 'Display not found.' }, 404);
+      const pages = await pagesFor(locationId,env); const type = databaseSource(body.desired_source);
+      const value = ({ menu:pages.menu_url, ads:pages.ads_url, funzone:pages.funzone_url, media:'' })[body.desired_source];
+      await env.DB.prepare(`INSERT INTO screen_assignments(screen_id,source_type,source_value,desired_revision,updated_by)
+        VALUES(?,?,?,?,?) ON CONFLICT(screen_id) DO UPDATE SET source_type=excluded.source_type,source_value=excluded.source_value,
+        desired_revision=screen_assignments.desired_revision+1,updated_by=excluded.updated_by,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
+        .bind(itemId,type,value,1,session.profile.id).run();
       return json({ ok: true });
     }
     if (section === 'displays' && itemId && request.method === 'DELETE') {
       if (!['system_admin', 'location_manager'].includes(role)) return json({ error: 'Manager access required.' }, 403);
-      await env.DB.prepare('UPDATE displays SET active=0,device_token_hash=NULL,pairing_code=NULL WHERE id=? AND location_id=?').bind(itemId, locationId).run();
+      const row = await env.DB.prepare('SELECT device_id FROM screens WHERE id=? AND location_id=?').bind(itemId,locationId).first();
+      if (row?.device_id) await env.DB.prepare(`UPDATE devices SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).bind(row.device_id).run();
+      await env.DB.prepare(`UPDATE screens SET active=0,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND location_id=?`).bind(itemId,locationId).run();
       return json({ ok: true });
     }
   }
