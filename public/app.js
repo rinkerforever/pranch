@@ -22,7 +22,7 @@ async function upload(path, file) {
   return data;
 }
 function signedOut() { sessionStorage.removeItem(tokenKey); currentLocation = null; $('login-card').classList.remove('hidden'); $('password-card').classList.add('hidden'); $('app-card').classList.add('hidden'); }
-function sourceLabel(value) { if (value.startsWith('campaign:')) return currentCampaigns.find((item) => `campaign:${item.id}` === value)?.name || 'Marketing campaign'; if (value.startsWith('custom:')) return currentPages.custom_pages.find((page) => `custom:${page.id}` === value)?.name || 'Custom page'; return ({ menu:'Menu', ads:'Ads', funzone:'Funzone Ads', media:'Uploaded Media' })[value] || value; }
+function sourceLabel(value) { if (value.startsWith('campaign:')) { const name=currentCampaigns.find((item) => `campaign:${item.id}` === value)?.name; return name ? `Marketing Campaign — ${name}` : 'Marketing Campaign'; } if (value.startsWith('custom:')) return currentPages.custom_pages.find((page) => `custom:${page.id}` === value)?.name || 'Custom page'; return ({ menu:'Menu', ads:'Ads', funzone:'Funzone Ads', media:'Marketing Campaign' })[value] || value; }
 function isOnline(value) {
   if (!value) return false;
   let normalized = String(value).replace(' ', 'T');
@@ -54,7 +54,7 @@ function renderDisplays(displays) {
     const state = document.createElement('span'); state.className = `status ${isOnline(display.last_seen) ? 'online' : ''}`; state.textContent = display.pending ? 'Waiting to pair' : (isOnline(display.last_seen) ? 'Online' : 'Offline');
     title.append(name, state); top.append(title);
     const select = document.createElement('select'); select.setAttribute('aria-label', `Content for ${display.name}`);
-    ['menu','ads','funzone','media',...currentCampaigns.map((campaign) => `campaign:${campaign.id}`),...currentPages.custom_pages.map((page) => `custom:${page.id}`)].forEach((value) => { const option = new Option(sourceLabel(value), value); option.selected = display.desired_source === value; select.add(option); });
+    ['menu','ads','funzone',...currentCampaigns.map((campaign) => `campaign:${campaign.id}`),...currentPages.custom_pages.map((page) => `custom:${page.id}`)].forEach((value) => { const option = new Option(sourceLabel(value), value); option.selected = display.desired_source === value; select.add(option); });
     const apply = document.createElement('button'); apply.className = 'small'; apply.textContent = 'Apply';
     apply.onclick = async () => { apply.disabled = true; try { await call(`/api/locations/${encodeURIComponent(currentLocation)}/displays/${encodeURIComponent(display.id)}`, { method:'PATCH', body:JSON.stringify({ desired_source:select.value }) }); apply.textContent = 'Applied'; setTimeout(() => { apply.textContent = 'Apply'; apply.disabled = false; }, 1200); } catch (error) { alert(error.message); apply.disabled = false; } };
     const controls = document.createElement('div'); controls.className = 'display-controls'; controls.append(select, apply);
