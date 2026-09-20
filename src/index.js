@@ -94,6 +94,25 @@ async function inviteUser(request, session, env) {
   return json({ ok:true, id:invited.id },201);
 }
 
+async function authAccountStatuses(env) {
+  const statuses = new Map();
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) return statuses;
+  try {
+    const response = await fetch(`${env.SUPABASE_URL.replace(/\/$/,'')}/auth/v1/admin/users?per_page=1000&page=1`, {
+      headers: { apikey:env.SUPABASE_SERVICE_ROLE_KEY,
+        authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` },
+    });
+    if (!response.ok) return statuses;
+    const result = await response.json();
+    for (const user of (result.users || [])) statuses.set(user.id, {
+      activated:Boolean(user.email_confirmed_at || user.confirmed_at),
+      activated_at:user.email_confirmed_at || user.confirmed_at || null,
+      last_login_at:user.last_sign_in_at || null,
+    });
+  } catch (error) { console.error('Could not load Supabase user status', error); }
+  return statuses;
+}
+
 async function supabaseUser(request, env) {
   if (!configured(env)) return null;
   const authorization = request.headers.get('authorization') || '';
@@ -280,9 +299,13 @@ async function api(request, env, url) {
     const users = (await env.DB.prepare(`SELECT id,email,display_name,system_admin,active,created_at
       FROM user_profiles ORDER BY display_name,email`).all()).results || [];
     const roles = (await env.DB.prepare(`SELECT user_id,location_id,role,permissions_json FROM user_location_roles`).all()).results || [];
+    const authStatuses = await authAccountStatuses(env);
     for (const user of users) user.assignments = roles.filter((role) => role.user_id === user.id).map((role) => {
       let permissions = []; try { permissions = JSON.parse(role.permissions_json || '[]'); } catch {}
       return { location_id:role.location_id, role:role.role, permissions };
+    });
+    for (const user of users) Object.assign(user, authStatuses.get(user.id) || {
+      activated:false, activated_at:null, last_login_at:null,
     });
     return json({ users, invitationsConfigured:Boolean(env.SUPABASE_SERVICE_ROLE_KEY) });
   }

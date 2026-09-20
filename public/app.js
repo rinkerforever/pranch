@@ -72,6 +72,7 @@ async function loadApp() {
 }
 
 function permissionDefaults(role) { return role === 'location_manager' ? ['manage_displays','manage_pages','manage_content','manage_users'] : role === 'operator' ? ['manage_displays','manage_content'] : []; }
+function accountTime(value) { return value ? new Date(value).toLocaleString() : 'Never'; }
 function renderUserLocations(assignments = []) {
   $('user-locations').replaceChildren(...allLocations.map((location) => {
     const saved = assignments.find((item) => item.location_id === location.id); const box = document.createElement('fieldset'); box.className = 'assignment'; box.dataset.locationId = location.id;
@@ -89,7 +90,10 @@ async function loadUsers() {
   $('invite-warning').classList.toggle('hidden',invitationsConfigured);
   $('users').replaceChildren(...data.users.map((user) => {
     const row = document.createElement('div'); row.className = 'user-row'; const info = document.createElement('div');
-    const name = document.createElement('strong'); name.textContent = user.display_name; const detail = document.createElement('span'); detail.textContent = `${user.email} · ${user.system_admin ? 'system administrator' : `${user.assignments.length} location${user.assignments.length === 1 ? '' : 's'}`} · ${user.active ? 'active' : 'disabled'}`; info.append(name,detail);
+    const name = document.createElement('strong'); name.textContent = user.display_name;
+    const detail = document.createElement('span'); detail.textContent = `${user.email} · ${user.system_admin ? 'system administrator' : `${user.assignments.length} location${user.assignments.length === 1 ? '' : 's'}`} · ${user.active ? 'enabled' : 'disabled'}`;
+    const activity = document.createElement('span'); activity.textContent = `${user.activated ? 'Account activated' : 'Invitation pending'} · Last login: ${accountTime(user.last_login_at)}`;
+    info.append(name,detail,activity);
     const edit = document.createElement('button'); edit.className = 'quiet small'; edit.textContent = 'Edit'; edit.onclick = () => openUser(user); row.append(info,edit); return row;
   }));
 }
