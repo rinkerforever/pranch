@@ -129,7 +129,9 @@ async function loadUsers() {
     const detail = document.createElement('span'); detail.textContent = `${user.email} · ${user.system_admin ? 'system administrator' : `${user.assignments.length} location${user.assignments.length === 1 ? '' : 's'}`} · ${user.active ? 'enabled' : 'disabled'}`;
     const activity = document.createElement('span'); activity.textContent = `${user.activated ? 'Account activated' : 'Invitation pending'} · Last login: ${accountTime(user.last_login_at)}`;
     info.append(name,detail,activity);
-    const edit = document.createElement('button'); edit.className = 'quiet small'; edit.textContent = 'Edit'; edit.onclick = () => openUser(user); row.append(info,edit); return row;
+    const actions=document.createElement('div'); actions.className='user-actions';
+    if (!user.activated) { const resend=document.createElement('button'); resend.className='quiet small'; resend.textContent='Resend invite'; resend.onclick=async()=>{ resend.disabled=true; resend.textContent='Sending…'; try{ await call(`/api/admin/users/${encodeURIComponent(user.id)}/resend-invite`,{method:'POST'}); resend.textContent='Invite sent'; setTimeout(()=>{resend.textContent='Resend invite';resend.disabled=false;},2500); }catch(error){alert(error.message);resend.textContent='Resend invite';resend.disabled=false;} }; actions.append(resend); }
+    const edit = document.createElement('button'); edit.className = 'quiet small'; edit.textContent = 'Edit'; edit.onclick = () => openUser(user); actions.append(edit); row.append(info,actions); return row;
   }));
 }
 function openUser(user = null) {
