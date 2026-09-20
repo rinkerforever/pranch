@@ -37,6 +37,7 @@ async function pagesFor(locationId, env) {
 }
 
 function publicSource(sourceType, sourceValue, pages = pageDefaults) {
+  if (sourceType === 'campaign') return `campaign:${sourceValue}`;
   if (sourceType === 'custom_url') {
     const custom = (pages.custom_pages || []).find((page) => page.url === sourceValue);
     return custom ? `custom:${custom.id}` : 'menu';
@@ -92,6 +93,60 @@ async function inviteUser(request, session, env) {
     VALUES(?,?,?,?,?,1)`).bind(invited.id,invited.id,email,displayName,body.system_admin ? 1 : 0).run();
   await replaceAssignments(invited.id,assignments,env);
   return json({ ok:true, id:invited.id },201);
+}
+
+async function sha256Bytes(value) {
+  const bytes = await crypto.subtle.digest('SHA-256', value);
+  return [...new Uint8Array(bytes)].map((part) => part.toString(16).padStart(2, '0')).join('');
+}
+
+const campaignTypes = new Map([
+  ['image/jpeg', 'jpg'], ['image/png', 'png'], ['image/webp', 'webp'], ['video/mp4', 'mp4'],
+]);
+const CAMPAIGN_FILE_LIMIT = 100 * 1024 * 1024;
+
+async function ensureMarketingSchema(env) {
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS campaigns(id TEXT PRIMARY KEY,name TEXT NOT NULL,seconds INTEGER NOT NULL DEFAULT 10,muted INTEGER NOT NULL DEFAULT 1,active INTEGER NOT NULL DEFAULT 1,revision INTEGER NOT NULL DEFAULT 1,created_by TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS campaign_items(id TEXT PRIMARY KEY,campaign_id TEXT NOT NULL,object_key TEXT NOT NULL,filename TEXT NOT NULL,mime_type TEXT NOT NULL,size INTEGER NOT NULL,sha256 TEXT NOT NULL,sort_order INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS campaign_locations(campaign_id TEXT NOT NULL,location_id TEXT NOT NULL,PRIMARY KEY(campaign_id,location_id))`),
+  ]);
+}
+
+async function campaignsFor(session, env) {
+  await ensureMarketingSchema(env);
+  const campaigns = (await env.DB.prepare(`SELECT c.*,GROUP_CONCAT(cl.location_id) location_ids FROM campaigns c LEFT JOIN campaign_locations cl ON cl.campaign_id=c.id GROUP BY c.id ORDER BY c.updated_at DESC`).all()).results || [];
+  const allowed = systemAdmin(session) ? null : new Set((await env.DB.prepare('SELECT location_id FROM user_location_roles WHERE user_id=?').bind(session.user.id).all()).results.map((row)=>row.location_id));
+  const items = (await env.DB.prepare('SELECT id,campaign_id,filename,mime_type,size,sort_order FROM campaign_items ORDER BY campaign_id,sort_order').all()).results || [];
+  return campaigns.map((campaign)=>({ ...campaign, location_ids:String(campaign.location_ids || '').split(',').filter(Boolean), items:items.filter((item)=>item.campaign_id===campaign.id) }))
+    .filter((campaign)=>!allowed || campaign.location_ids.some((id)=>allowed.has(id)));
+}
+
+async function campaignManifest(id, env) {
+  await ensureMarketingSchema(env);
+  const campaign = await env.DB.prepare('SELECT id,name,seconds,muted,revision FROM campaigns WHERE id=? AND active=1').bind(id).first();
+  if (!campaign) return null;
+  campaign.items = (await env.DB.prepare('SELECT id,filename,mime_type,size,sha256,sort_order FROM campaign_items WHERE campaign_id=? ORDER BY sort_order').bind(id).all()).results || [];
+  campaign.items = campaign.items.map((item)=>({ ...item, kind:item.mime_type.startsWith('image/')?'image':'video', url:`/api/device/campaign-media/${item.id}` }));
+  return campaign;
+}
+
+async function allowedCampaignLocations(session, requested, env) {
+  const ids = [...new Set((Array.isArray(requested) ? requested : []).map(String).filter(Boolean))];
+  if (!ids.length) return null;
+  for (const id of ids) {
+    const location = await env.DB.prepare('SELECT id FROM locations WHERE id=? AND active=1').bind(id).first();
+    if (!location || !await hasLocationPermission(session,id,'manage_content',env)) return null;
+  }
+  return ids;
+}
+
+async function canManageCampaign(session, campaignId, env) {
+  if (systemAdmin(session)) return true;
+  const locations = (await env.DB.prepare('SELECT location_id FROM campaign_locations WHERE campaign_id=?').bind(campaignId).all()).results || [];
+  if (!locations.length) return false;
+  for (const row of locations) if (!await hasLocationPermission(session,row.location_id,'manage_content',env)) return false;
+  return true;
 }
 
 async function authAccountStatuses(env) {
@@ -177,7 +232,10 @@ async function locationSnapshot(session, locationId, env) {
     return { id:row.id, name:row.name, desired_source:publicSource(row.source_type,row.source_value,pages),
       reported_source:status.reported_source || null, last_seen:row.last_seen_at, pending:row.pending };
   });
-  return { location, role, pages, displays };
+  await ensureMarketingSchema(env);
+  const campaigns = (await env.DB.prepare(`SELECT c.id,c.name FROM campaigns c JOIN campaign_locations cl ON cl.campaign_id=c.id
+    WHERE cl.location_id=? AND c.active=1 ORDER BY c.name`).bind(locationId).all()).results || [];
+  return { location, role, pages, displays, campaigns };
 }
 
 async function deviceApi(request, env, url) {
@@ -204,6 +262,18 @@ async function deviceApi(request, env, url) {
     FROM devices d JOIN screens s ON s.device_id=d.id LEFT JOIN screen_assignments a ON a.screen_id=s.id
     WHERE d.credential_hash=? AND d.revoked_at IS NULL AND s.active=1`).bind(await sha256(token)).first();
   if (!display) return json({ error: 'Device authentication failed.' }, 401);
+  const mediaMatch = url.pathname.match(/^\/api\/device\/campaign-media\/([^/]+)$/);
+  if (mediaMatch && request.method === 'GET') {
+    await ensureMarketingSchema(env);
+    const item = await env.DB.prepare(`SELECT i.object_key,i.mime_type,i.size FROM campaign_items i
+      JOIN campaigns c ON c.id=i.campaign_id JOIN campaign_locations cl ON cl.campaign_id=c.id
+      WHERE i.id=? AND cl.location_id=? AND c.active=1`).bind(decodeURIComponent(mediaMatch[1]),display.location_id).first();
+    if (!item) return json({ error:'Campaign file not found.' },404);
+    const object = await env.MEDIA.get(item.object_key);
+    if (!object) return json({ error:'Campaign file is unavailable.' },404);
+    return new Response(object.body,{ headers:{ 'content-type':item.mime_type, 'content-length':String(item.size),
+      'cache-control':'private, max-age=3600', 'x-content-type-options':'nosniff' } });
+  }
   if (url.pathname === '/api/device/state' && request.method === 'POST') {
     let body; try { body = await request.json(); } catch { return json({ error: 'Invalid request.' }, 400); }
     const reported = SOURCES.includes(body.reported_source) ? body.reported_source : null;
@@ -212,8 +282,10 @@ async function deviceApi(request, env, url) {
   }
   if (url.pathname === '/api/device/state') {
     const pages = await pagesFor(display.location_id,env);
+    const desiredSource = publicSource(display.source_type,display.source_value,pages);
+    const campaign = display.source_type === 'campaign' ? await campaignManifest(display.source_value,env) : null;
     return json({ device_id:display.device_id, screen_id:display.screen_id, location_id:display.location_id,
-      desired_source:publicSource(display.source_type,display.source_value,pages), pages });
+      desired_source:campaign ? desiredSource : (display.source_type === 'campaign' ? 'menu' : desiredSource), pages, campaign });
   }
   return json({ error: 'Not found.' }, 404);
 }
@@ -323,6 +395,87 @@ async function api(request, env, url) {
       .bind(displayName,body.system_admin ? 1 : 0,body.active ? 1 : 0,userId).run();
     await replaceAssignments(userId,assignments,env); return json({ ok:true });
   }
+  if (url.pathname === '/api/marketing' && request.method === 'GET') {
+    return json({ campaigns:await campaignsFor(session,env) });
+  }
+  if (url.pathname === '/api/marketing/campaigns' && request.method === 'POST') {
+    await ensureMarketingSchema(env);
+    let body; try { body = await request.json(); } catch { return json({ error:'Invalid request.' },400); }
+    const name = String(body.name || '').trim();
+    const seconds = Number(body.seconds || 10);
+    const locationIds = await allowedCampaignLocations(session,body.location_ids,env);
+    if (name.length < 2 || name.length > 80) return json({ error:'Campaign name must be 2–80 characters.' },400);
+    if (!Number.isInteger(seconds) || seconds < 3 || seconds > 300) return json({ error:'Image time must be 3–300 seconds.' },400);
+    if (!locationIds) return json({ error:'Choose at least one location where you have content permission.' },403);
+    const id = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO campaigns(id,name,seconds,muted,created_by) VALUES(?,?,?,?,?)`).bind(id,name,seconds,body.muted === false ? 0 : 1,session.profile.id),
+      ...locationIds.map((locationId)=>env.DB.prepare('INSERT INTO campaign_locations(campaign_id,location_id) VALUES(?,?)').bind(id,locationId)),
+    ]);
+    return json({ id },201);
+  }
+  const campaignMediaMatch = url.pathname.match(/^\/api\/marketing\/campaigns\/([^/]+)\/media$/);
+  if (campaignMediaMatch && request.method === 'POST') {
+    await ensureMarketingSchema(env);
+    const campaignId = decodeURIComponent(campaignMediaMatch[1]);
+    if (!await canManageCampaign(session,campaignId,env)) return json({ error:'Content-management permission required.' },403);
+    const campaign = await env.DB.prepare('SELECT id FROM campaigns WHERE id=? AND active=1').bind(campaignId).first();
+    if (!campaign) return json({ error:'Campaign not found.' },404);
+    let form; try { form = await request.formData(); } catch { return json({ error:'Invalid upload.' },400); }
+    const file = form.get('file');
+    if (!(file instanceof File) || !file.size) return json({ error:'Choose an image or video file.' },400);
+    const extension = campaignTypes.get(String(file.type).toLowerCase());
+    if (!extension) return json({ error:'Use JPEG, PNG, WebP, or MP4 files.' },415);
+    if (file.size > CAMPAIGN_FILE_LIMIT) return json({ error:'Each campaign file must be 100 MB or smaller.' },413);
+    if (file.type.startsWith('image/') && file.size > 20 * 1024 * 1024) return json({ error:'Campaign images must be 20 MB or smaller.' },413);
+    const bytes = await file.arrayBuffer(); const id = crypto.randomUUID();
+    const objectKey = `campaigns/${campaignId}/${id}.${extension}`;
+    await env.MEDIA.put(objectKey,bytes,{ httpMetadata:{ contentType:file.type }, customMetadata:{ campaignId, itemId:id } });
+    const order = await env.DB.prepare('SELECT COALESCE(MAX(sort_order),-1)+1 next_order FROM campaign_items WHERE campaign_id=?').bind(campaignId).first();
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`INSERT INTO campaign_items(id,campaign_id,object_key,filename,mime_type,size,sha256,sort_order)
+          VALUES(?,?,?,?,?,?,?,?)`).bind(id,campaignId,objectKey,String(file.name || `media.${extension}`).slice(0,180),file.type,file.size,await sha256Bytes(bytes),order.next_order),
+        env.DB.prepare(`UPDATE campaigns SET revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).bind(campaignId),
+      ]);
+    } catch (error) { await env.MEDIA.delete(objectKey); throw error; }
+    return json({ id,filename:file.name,size:file.size },201);
+  }
+  const campaignMatch = url.pathname.match(/^\/api\/marketing\/campaigns\/([^/]+)$/);
+  if (campaignMatch && request.method === 'PATCH') {
+    await ensureMarketingSchema(env);
+    const campaignId = decodeURIComponent(campaignMatch[1]);
+    if (!await canManageCampaign(session,campaignId,env)) return json({ error:'Content-management permission required.' },403);
+    let body; try { body = await request.json(); } catch { return json({ error:'Invalid request.' },400); }
+    const name = String(body.name || '').trim(); const seconds = Number(body.seconds || 10);
+    const locationIds = await allowedCampaignLocations(session,body.location_ids,env);
+    if (name.length < 2 || name.length > 80 || !Number.isInteger(seconds) || seconds < 3 || seconds > 300) return json({ error:'Check the campaign name and image time.' },400);
+    if (!locationIds) return json({ error:'Choose at least one permitted location.' },403);
+    const previous = (await env.DB.prepare('SELECT location_id FROM campaign_locations WHERE campaign_id=?').bind(campaignId).all()).results || [];
+    const removed = previous.map((row)=>row.location_id).filter((id)=>!locationIds.includes(id));
+    const statements = [
+      env.DB.prepare(`UPDATE campaigns SET name=?,seconds=?,muted=?,revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).bind(name,seconds,body.muted === false ? 0 : 1,campaignId),
+      env.DB.prepare('DELETE FROM campaign_locations WHERE campaign_id=?').bind(campaignId),
+      ...locationIds.map((id)=>env.DB.prepare('INSERT INTO campaign_locations(campaign_id,location_id) VALUES(?,?)').bind(campaignId,id)),
+    ];
+    for (const locationId of removed) statements.push(env.DB.prepare(`UPDATE screen_assignments SET source_type='menu',source_value='',desired_revision=desired_revision+1
+      WHERE source_type='campaign' AND source_value=? AND screen_id IN (SELECT id FROM screens WHERE location_id=?)`).bind(campaignId,locationId));
+    await env.DB.batch(statements); return json({ ok:true });
+  }
+  if (campaignMatch && request.method === 'DELETE') {
+    await ensureMarketingSchema(env);
+    const campaignId = decodeURIComponent(campaignMatch[1]);
+    if (!await canManageCampaign(session,campaignId,env)) return json({ error:'Content-management permission required.' },403);
+    const items = (await env.DB.prepare('SELECT object_key FROM campaign_items WHERE campaign_id=?').bind(campaignId).all()).results || [];
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE screen_assignments SET source_type='menu',source_value='',desired_revision=desired_revision+1 WHERE source_type='campaign' AND source_value=?`).bind(campaignId),
+      env.DB.prepare('DELETE FROM campaign_items WHERE campaign_id=?').bind(campaignId),
+      env.DB.prepare('DELETE FROM campaign_locations WHERE campaign_id=?').bind(campaignId),
+      env.DB.prepare('DELETE FROM campaigns WHERE id=?').bind(campaignId),
+    ]);
+    await Promise.all(items.map((item)=>env.MEDIA.delete(item.object_key)));
+    return json({ ok:true });
+  }
   const match = url.pathname.match(/^\/api\/locations\/([^/]+)(?:\/(pages|displays))?(?:\/([^/]+))?$/);
   if (match) {
     const locationId = decodeURIComponent(match[1]);
@@ -381,11 +534,20 @@ async function api(request, env, url) {
       if (!await hasLocationPermission(session,locationId,'manage_content',env)) return json({ error: 'Content-management permission required.' }, 403);
       let body; try { body = await request.json(); } catch { return json({ error: 'Invalid request.' }, 400); }
       const requestedSource = String(body.desired_source || '');
-      if (!SOURCES.includes(requestedSource) && !requestedSource.startsWith('custom:')) return json({ error: 'Unknown content source.' }, 400);
+      if (!SOURCES.includes(requestedSource) && !requestedSource.startsWith('custom:') && !requestedSource.startsWith('campaign:')) return json({ error: 'Unknown content source.' }, 400);
       const screen = await env.DB.prepare('SELECT id FROM screens WHERE id=? AND location_id=? AND active=1').bind(itemId,locationId).first();
       if (!screen) return json({ error: 'Display not found.' }, 404);
       const pages = await pagesFor(locationId,env); let type; let value;
-      if (requestedSource.startsWith('custom:')) {
+      if (requestedSource.startsWith('campaign:')) {
+        const campaignId = requestedSource.slice(9);
+        await ensureMarketingSchema(env);
+        const campaign = await env.DB.prepare(`SELECT c.id FROM campaigns c JOIN campaign_locations cl ON cl.campaign_id=c.id
+          WHERE c.id=? AND cl.location_id=? AND c.active=1`).bind(campaignId,locationId).first();
+        if (!campaign) return json({ error:'Campaign is not assigned to this location.' },400);
+        const count = await env.DB.prepare('SELECT COUNT(*) count FROM campaign_items WHERE campaign_id=?').bind(campaignId).first();
+        if (!count.count) return json({ error:'Add media to this campaign before selecting it.' },400);
+        type = 'campaign'; value = campaignId;
+      } else if (requestedSource.startsWith('custom:')) {
         const page = (pages.custom_pages || []).find((item) => item.id === requestedSource.slice(7));
         if (!page) return json({ error: 'Custom page not found.' }, 400);
         type = 'custom_url'; value = page.url;
