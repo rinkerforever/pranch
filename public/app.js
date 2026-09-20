@@ -54,7 +54,15 @@ function renderDisplays(displays) {
     const state = document.createElement('span'); state.className = `status ${isOnline(display.last_seen) ? 'online' : ''}`; state.textContent = display.pending ? 'Waiting to pair' : (isOnline(display.last_seen) ? 'Online' : 'Offline');
     title.append(name, state); top.append(title);
     const select = document.createElement('select'); select.setAttribute('aria-label', `Content for ${display.name}`);
-    ['menu','ads','funzone',...currentCampaigns.map((campaign) => `campaign:${campaign.id}`),...currentPages.custom_pages.map((page) => `custom:${page.id}`)].forEach((value) => { const option = new Option(sourceLabel(value), value); option.selected = display.desired_source === value; select.add(option); });
+    ['menu','ads','funzone'].forEach((value) => { const option = new Option(sourceLabel(value), value); option.selected = display.desired_source === value; select.add(option); });
+    if (currentCampaigns.length) {
+      const group = document.createElement('optgroup'); group.label = 'Marketing Campaign';
+      currentCampaigns.forEach((campaign) => { const value=`campaign:${campaign.id}`; const option=new Option(campaign.name,value); option.selected=display.desired_source===value; group.append(option); });
+      select.append(group);
+    } else {
+      const unavailable = new Option('Marketing Campaign — add or assign one first',''); unavailable.disabled=true; select.add(unavailable);
+    }
+    currentPages.custom_pages.forEach((page) => { const value=`custom:${page.id}`; const option=new Option(sourceLabel(value),value); option.selected=display.desired_source===value; select.add(option); });
     const apply = document.createElement('button'); apply.className = 'small'; apply.textContent = 'Apply';
     apply.onclick = async () => { apply.disabled = true; try { await call(`/api/locations/${encodeURIComponent(currentLocation)}/displays/${encodeURIComponent(display.id)}`, { method:'PATCH', body:JSON.stringify({ desired_source:select.value }) }); apply.textContent = 'Applied'; setTimeout(() => { apply.textContent = 'Apply'; apply.disabled = false; }, 1200); } catch (error) { alert(error.message); apply.disabled = false; } };
     const controls = document.createElement('div'); controls.className = 'display-controls'; controls.append(select, apply);
