@@ -14,7 +14,13 @@ async function call(path, options = {}) {
 }
 function signedOut() { sessionStorage.removeItem(tokenKey); currentLocation = null; $('login-card').classList.remove('hidden'); $('password-card').classList.add('hidden'); $('app-card').classList.add('hidden'); }
 function sourceLabel(value) { if (value.startsWith('custom:')) return currentPages.custom_pages.find((page) => `custom:${page.id}` === value)?.name || 'Custom page'; return ({ menu:'Menu', ads:'Ads', funzone:'Funzone Ads', media:'Uploaded Media' })[value] || value; }
-function isOnline(value) { return value && Date.now() - new Date(`${value.replace(' ', 'T')}Z`).getTime() < 120000; }
+function isOnline(value) {
+  if (!value) return false;
+  let normalized = String(value).replace(' ', 'T');
+  if (!normalized.endsWith('Z') && !/[+-]\d\d:\d\d$/.test(normalized)) normalized += 'Z';
+  const stamp = new Date(normalized).getTime();
+  return Number.isFinite(stamp) && Date.now() - stamp < 120000;
+}
 async function loadLocation(id) {
   const data = await call(`/api/locations/${encodeURIComponent(id)}`); currentLocation = data.location.id;
   $('location-role').textContent = data.role.replaceAll('_', ' '); currentPages = { ...data.pages, custom_pages:data.pages.custom_pages || [] };
@@ -44,7 +50,9 @@ function renderDisplays(displays) {
     apply.onclick = async () => { apply.disabled = true; try { await call(`/api/locations/${encodeURIComponent(currentLocation)}/displays/${encodeURIComponent(display.id)}`, { method:'PATCH', body:JSON.stringify({ desired_source:select.value }) }); apply.textContent = 'Applied'; setTimeout(() => { apply.textContent = 'Apply'; apply.disabled = false; }, 1200); } catch (error) { alert(error.message); apply.disabled = false; } };
     const controls = document.createElement('div'); controls.className = 'display-controls'; controls.append(select, apply);
     const detail = document.createElement('small'); detail.textContent = display.reported_source ? `TV reports: ${sourceLabel(display.reported_source)}` : 'Waiting for a status report from the Pi';
-    card.append(top, controls, detail); return card;
+    const remove = document.createElement('button'); remove.className = 'quiet small'; remove.textContent = display.pending ? 'Cancel pairing' : 'Remove display';
+    remove.onclick = async () => { if (!confirm(`${remove.textContent} for ${display.name}?`)) return; remove.disabled = true; try { await call(`/api/locations/${encodeURIComponent(currentLocation)}/displays/${encodeURIComponent(display.id)}`, { method:'DELETE' }); await loadLocation(currentLocation); } catch (error) { alert(error.message); remove.disabled = false; } };
+    controls.append(remove); card.append(top, controls, detail); return card;
   }));
 }
 async function loadApp() {
@@ -108,3 +116,8 @@ const invite = new URLSearchParams(location.hash.slice(1)); const inviteToken = 
 if (invite.get('error_description')) { $('message').textContent = invite.get('error_description'); history.replaceState(null, '', '/'); }
 else if (inviteToken && (inviteType === 'invite' || inviteType === 'recovery')) { sessionStorage.setItem(tokenKey, inviteToken); $('login-card').classList.add('hidden'); $('password-card').classList.remove('hidden'); if (inviteType === 'recovery') $('password-title').textContent = 'Reset your password'; }
 else if (sessionStorage.getItem(tokenKey)) loadApp();
+setInterval(() => {
+  if (sessionStorage.getItem(tokenKey) && currentLocation && !$('app-card').classList.contains('hidden')) {
+    loadLocation(currentLocation).catch(() => {});
+  }
+}, 20000);

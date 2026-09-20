@@ -144,6 +144,9 @@ async function locationSnapshot(session, locationId, env) {
   if (!role) return null;
   const location = await env.DB.prepare('SELECT id,name,slug,active FROM locations WHERE id=? AND active=1').bind(locationId).first();
   if (!location) return null;
+  await env.DB.prepare(`UPDATE screens SET active=0,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE location_id=? AND device_id IS NULL AND id IN (SELECT id FROM enrollment_codes
+    WHERE used_at IS NULL AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).bind(locationId).run();
   const pages = await pagesFor(locationId, env);
   const rows = (await env.DB.prepare(`SELECT s.id,s.name,s.device_id,d.last_seen_at,d.status_json,a.source_type,a.source_value,
     CASE WHEN e.used_at IS NULL AND e.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now') THEN 1 ELSE 0 END pending
