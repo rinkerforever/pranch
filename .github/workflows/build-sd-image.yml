@@ -46,7 +46,7 @@ jobs:
           EOF
           sudo touch /tmp/pi-gen/stage2/SKIP_IMAGES /tmp/pi-gen/stage4/SKIP_IMAGES /tmp/pi-gen/stage5/SKIP_IMAGES
       - name: Build image
-        run: cd /tmp/pi-gen && sudo ./build.sh
+        run: cd /tmp/pi-gen && ./build-docker.sh
       - name: Collect and checksum image
         run: |
           image="$(find /tmp/pi-gen/deploy -maxdepth 1 -name '*.img.xz' -print -quit)"
