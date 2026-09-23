@@ -113,6 +113,56 @@ async function ensureMarketingSchema(env) {
   ]);
 }
 
+async function ensureEnrollmentSchema(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS device_enrollments(
+    id TEXT PRIMARY KEY,device_id TEXT NOT NULL UNIQUE,device_name TEXT NOT NULL,code_hash TEXT NOT NULL UNIQUE,
+    claim_hash TEXT NOT NULL,device_token TEXT,screen_id TEXT,location_id TEXT,
+    expires_at TEXT NOT NULL,approved_at TEXT,claimed_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`).run();
+}
+
+function cleanDeviceName(value) {
+  return String(value || '').replace(/[^a-zA-Z0-9 ._()-]/g,'').trim().slice(0,80) || 'Pizza Ranch Display';
+}
+
+async function startEnrollment(request, env) {
+  await ensureEnrollmentSchema(env);
+  let body; try { body=await request.json(); } catch { return json({ error:'Invalid request.' },400); }
+  const deviceId=String(body.device_id || '').toLowerCase(); const claimSecret=String(body.claim_secret || '');
+  if (!/^[a-f0-9]{32}$/.test(deviceId) || !/^[a-f0-9]{64}$/.test(claimSecret)) return json({ error:'Invalid display identity.' },400);
+  await env.DB.prepare(`DELETE FROM device_enrollments WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`).run();
+  const total=await env.DB.prepare('SELECT COUNT(*) count FROM device_enrollments WHERE approved_at IS NULL').first();
+  if (total.count >= 500) return json({ error:'Enrollment is temporarily busy.' },429);
+  let code='';
+  for (let attempt=0;attempt<8;attempt++) {
+    const candidate=String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6,'0');
+    if (!await env.DB.prepare('SELECT id FROM device_enrollments WHERE code_hash=?').bind(await sha256(candidate)).first()) { code=candidate; break; }
+  }
+  if (!code) return json({ error:'Could not create an enrollment code.' },503);
+  const id=crypto.randomUUID(); const name=cleanDeviceName(body.device_name);
+  await env.DB.prepare(`INSERT INTO device_enrollments(id,device_id,device_name,code_hash,claim_hash,expires_at)
+    VALUES(?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now','+30 minutes'))
+    ON CONFLICT(device_id) DO UPDATE SET id=excluded.id,device_name=excluded.device_name,code_hash=excluded.code_hash,
+      claim_hash=excluded.claim_hash,device_token=NULL,screen_id=NULL,location_id=NULL,
+      expires_at=excluded.expires_at,approved_at=NULL,claimed_at=NULL,created_at=CURRENT_TIMESTAMP`)
+    .bind(id,deviceId,name,await sha256(code),await sha256(claimSecret)).run();
+  return json({ enrollment_id:id, code, expires_in:1800,
+    enrollment_url:`${new URL(request.url).origin}/enroll?code=${encodeURIComponent(code)}` },201);
+}
+
+async function enrollmentStatus(request, env) {
+  await ensureEnrollmentSchema(env);
+  let body; try { body=await request.json(); } catch { return json({ error:'Invalid request.' },400); }
+  const id=String(body.enrollment_id || ''); const claimSecret=String(body.claim_secret || '');
+  if (!id || !/^[a-f0-9]{64}$/.test(claimSecret)) return json({ error:'Invalid enrollment.' },400);
+  const row=await env.DB.prepare(`SELECT * FROM device_enrollments WHERE id=? AND claim_hash=?
+    AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`).bind(id,await sha256(claimSecret)).first();
+  if (!row) return json({ error:'Enrollment expired. Scan the new QR code shown on the TV.' },410);
+  if (!row.device_token) return json({ status:'pending' });
+  await env.DB.prepare(`UPDATE device_enrollments SET claimed_at=COALESCE(claimed_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?`).bind(id).run();
+  return json({ status:'approved', device_id:row.device_id, screen_id:row.screen_id,
+    location_id:row.location_id, device_token:row.device_token });
+}
+
 async function campaignsFor(session, env) {
   await ensureMarketingSchema(env);
   const campaigns = (await env.DB.prepare(`SELECT c.*,GROUP_CONCAT(cl.location_id) location_ids FROM campaigns c LEFT JOIN campaign_locations cl ON cl.campaign_id=c.id GROUP BY c.id ORDER BY c.updated_at DESC`).all()).results || [];
@@ -338,10 +388,43 @@ async function api(request, env, url) {
   }
   if (url.pathname === '/api/auth/login' && request.method === 'POST') return login(request, env);
   if (url.pathname === '/api/auth/password' && request.method === 'POST') return updatePassword(request, env);
+  if (url.pathname === '/api/device/enroll/start' && request.method === 'POST') return startEnrollment(request,env);
+  if (url.pathname === '/api/device/enroll/status' && request.method === 'POST') return enrollmentStatus(request,env);
   if (url.pathname.startsWith('/api/device/')) return deviceApi(request, env, url);
   const session = await requireUser(request, env);
   if (!session) return json({ error: 'Authentication required.' }, 401);
   if (url.pathname === '/api/session') return json({ profile: session.profile, userInvitesConfigured:Boolean(env.SUPABASE_SERVICE_ROLE_KEY) });
+  if (url.pathname === '/api/enroll/lookup' && request.method === 'GET') {
+    await ensureEnrollmentSchema(env); const code=String(url.searchParams.get('code') || '').replace(/\D/g,'');
+    if (code.length !== 6) return json({ error:'Enter the six-digit code shown on the TV.' },400);
+    const pending=await env.DB.prepare(`SELECT id,device_name,expires_at FROM device_enrollments WHERE code_hash=? AND approved_at IS NULL
+      AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`).bind(await sha256(code)).first();
+    return pending ? json({ device_name:pending.device_name,expires_at:pending.expires_at }) : json({ error:'This code is invalid or expired.' },404);
+  }
+  if (url.pathname === '/api/enroll/approve' && request.method === 'POST') {
+    await ensureEnrollmentSchema(env); let body; try { body=await request.json(); } catch { return json({ error:'Invalid request.' },400); }
+    const code=String(body.code || '').replace(/\D/g,''); const locationId=String(body.location_id || '');
+    if (code.length !== 6) return json({ error:'Enter the six-digit code shown on the TV.' },400);
+    if (!await hasLocationPermission(session,locationId,'manage_displays',env)) return json({ error:'Display-management permission required.' },403);
+    const pending=await env.DB.prepare(`SELECT * FROM device_enrollments WHERE code_hash=? AND approved_at IS NULL
+      AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`).bind(await sha256(code)).first();
+    if (!pending) return json({ error:'This code is invalid or expired.' },404);
+    const screenId=crypto.randomUUID(); const token=`${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll('-','');
+    const name=cleanDeviceName(body.name || pending.device_name);
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM screen_assignments WHERE screen_id IN (SELECT id FROM screens WHERE device_id=?)').bind(pending.device_id),
+      env.DB.prepare('DELETE FROM screens WHERE device_id=?').bind(pending.device_id),
+      env.DB.prepare('DELETE FROM devices WHERE id=?').bind(pending.device_id),
+      env.DB.prepare(`INSERT INTO devices(id,location_id,name,device_type,credential_hash,last_seen_at)
+        VALUES(?,?,?,'cloud-display',?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).bind(pending.device_id,locationId,name,await sha256(token)),
+      env.DB.prepare('INSERT INTO screens(id,location_id,name,device_id) VALUES(?,?,?,?)').bind(screenId,locationId,name,pending.device_id),
+      env.DB.prepare(`INSERT INTO screen_assignments(screen_id,source_type,source_value,desired_revision,updated_by)
+        VALUES(?,'menu','',1,?)`).bind(screenId,session.profile.id),
+      env.DB.prepare(`UPDATE device_enrollments SET device_token=?,screen_id=?,location_id=?,approved_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`)
+        .bind(token,screenId,locationId,pending.id),
+    ]);
+    return json({ ok:true,name,location_id:locationId });
+  }
   if (url.pathname === '/api/locations' && request.method === 'GET') {
     const admin = session.profile.global_role === 'system_admin';
     const query = admin

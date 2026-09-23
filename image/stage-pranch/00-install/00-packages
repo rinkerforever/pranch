@@ -1,0 +1,2 @@
+ca-certificates curl unzip avahi-daemon firefox python3 python3-flask python3-waitress python3-pil python3-qrcode ffmpeg libheif-examples nginx openssl rsync unattended-upgrades
+

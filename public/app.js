@@ -89,6 +89,18 @@ function renderCampaigns() {
     const actions=document.createElement('div'); actions.className='campaign-actions'; const edit=document.createElement('button'); edit.className='quiet small'; edit.textContent='Edit / add files'; edit.onclick=()=>openCampaign(campaign); const remove=document.createElement('button'); remove.className='quiet small'; remove.textContent='Delete'; remove.onclick=async()=>{ if(!confirm(`Delete ${campaign.name} and all of its cloud media?`))return; remove.disabled=true; try{ await call(`/api/marketing/campaigns/${encodeURIComponent(campaign.id)}`,{method:'DELETE'}); await Promise.all([loadMarketing(),loadLocation(currentLocation)]); }catch(error){alert(error.message);remove.disabled=false;} }; actions.append(edit,remove); card.append(info,actions); return card; }));
 }
 async function loadMarketing() { const data=await call('/api/marketing'); allCampaigns=data.campaigns || []; renderCampaigns(); }
+async function openEnrollmentFromUrl() {
+  if (location.pathname !== '/enroll') return;
+  const code=new URLSearchParams(location.search).get('code')?.replace(/\D/g,'') || '';
+  if (code.length !== 6) { $('status').textContent='The TV enrollment link is incomplete.'; return; }
+  try {
+    const pending=await call(`/api/enroll/lookup?code=${encodeURIComponent(code)}`);
+    $('enroll-code').value=code; $('enroll-name').value=pending.device_name || 'Pizza Ranch Display';
+    $('enroll-location').replaceChildren(...allLocations.map((item)=>new Option(item.name,item.id)));
+    if (currentLocation) $('enroll-location').value=currentLocation;
+    $('enroll-message').textContent=`TV code: ${code}`; $('enroll-dialog').showModal();
+  } catch(error) { $('status').textContent=error.message; }
+}
 async function loadApp() {
   try {
     const [{ profile, userInvitesConfigured }, { locations }] = await Promise.all([call('/api/session'), call('/api/locations')]);
@@ -100,6 +112,7 @@ async function loadApp() {
     if (locations.length) await loadLocation(currentLocation && locations.some((item) => item.id === currentLocation) ? currentLocation : locations[0].id);
     if (profile.global_role === 'system_admin') await loadUsers();
     await loadMarketing();
+    await openEnrollmentFromUrl();
   } catch (error) {
     if (error.status === 401) signedOut();
     else { $('login-card').classList.add('hidden'); $('app-card').classList.remove('hidden'); $('status').textContent = `Dashboard error: ${error.message}`; }
@@ -153,6 +166,7 @@ $('pages-form').addEventListener('submit', async (event) => { event.preventDefau
 $('add-display').addEventListener('click', async () => { const name = prompt('Name this TV display (for example, Dining Room Menu)'); if (!name) return; try { const result = await call(`/api/locations/${encodeURIComponent(currentLocation)}/displays`, { method:'POST', body:JSON.stringify({ name }) }); $('pair-result').classList.remove('hidden'); $('pair-result').textContent = `Pairing code: ${result.pairing_code}. Enter it on the Raspberry Pi within 15 minutes.`; await loadLocation(currentLocation); } catch (error) { alert(error.message); } });
 $('add-campaign').addEventListener('click',()=>openCampaign());
 $('campaign-form').addEventListener('submit',async(event)=>{ event.preventDefault(); const button=$('save-campaign'); button.disabled=true; const existing=$('campaign-id').value; const locationIds=[...$('campaign-locations').querySelectorAll('input:checked')].map((input)=>input.value); const body={name:$('campaign-name').value,seconds:Number($('campaign-seconds').value),muted:$('campaign-muted').checked,location_ids:locationIds}; $('campaign-message').textContent='Saving campaign…'; try{ let id=existing; if(existing)await call(`/api/marketing/campaigns/${encodeURIComponent(existing)}`,{method:'PATCH',body:JSON.stringify(body)}); else{id=(await call('/api/marketing/campaigns',{method:'POST',body:JSON.stringify(body)})).id;$('campaign-id').value=id;} const files=[...$('campaign-files').files]; for(let index=0;index<files.length;index++){ $('campaign-message').textContent=`Uploading ${index+1} of ${files.length}: ${files[index].name}`; await upload(`/api/marketing/campaigns/${encodeURIComponent(id)}/media`,files[index]); } $('campaign-dialog').close(); await Promise.all([loadMarketing(),loadLocation(currentLocation)]); }catch(error){ $('campaign-message').textContent=error.message; }finally{button.disabled=false;} });
+$('enroll-form').addEventListener('submit',async(event)=>{ event.preventDefault(); const button=$('approve-enrollment'); button.disabled=true; $('enroll-message').textContent='Adding TV…'; try { const locationId=$('enroll-location').value; await call('/api/enroll/approve',{method:'POST',body:JSON.stringify({code:$('enroll-code').value,name:$('enroll-name').value,location_id:locationId})}); $('enroll-message').textContent='TV added. It will connect and update automatically.'; history.replaceState(null,'','/'); currentLocation=locationId; setTimeout(async()=>{ $('enroll-dialog').close(); await loadLocation(locationId); },1800); } catch(error) { $('enroll-message').textContent=error.message; button.disabled=false; } });
 $('password-setup').addEventListener('submit', async (event) => { event.preventDefault(); const password = $('new-password').value; $('password-message').textContent = 'Saving password…'; if (password !== $('confirm-password').value) { $('password-message').textContent = 'The passwords do not match.'; return; } try { await call('/api/auth/password', { method:'POST', body:JSON.stringify({ password }) }); history.replaceState(null, '', '/'); $('new-password').value = ''; $('confirm-password').value = ''; await loadApp(); } catch (error) { $('password-message').textContent = error.message; } });
 call('/api/health').then((health) => { $('status').textContent = health.authConfigured ? 'Cloud service online' : 'Cloud service online · authentication setup pending'; }).catch(() => { $('status').textContent = 'Cloud service unavailable'; });
 const invite = new URLSearchParams(location.hash.slice(1)); const inviteToken = invite.get('access_token'); const inviteType = invite.get('type');

@@ -1,0 +1,65 @@
+name: Build Raspberry Pi SD image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pi-gen prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y coreutils quilt parted qemu-user-static debootstrap zerofree zip \
+            dosfstools e2fsprogs libarchive-tools libcap2-bin grep rsync xz-utils file git curl bc \
+            gpg pigz xxd arch-test bmap-tools kmod
+      - name: Configure 32-bit Raspberry Pi OS desktop image
+        run: |
+          git clone --depth 1 https://github.com/RPi-Distro/pi-gen.git /tmp/pi-gen
+          sudo cp -a image/stage-pranch /tmp/pi-gen/stage-pranch
+          sudo cp Pizza-Ranch-Kiosk.zip /tmp/pi-gen/stage-pranch/00-install/files/Pizza-Ranch-Kiosk.zip
+          sudo chmod +x /tmp/pi-gen/stage-pranch/prerun.sh \
+            /tmp/pi-gen/stage-pranch/00-install/00-run.sh \
+            /tmp/pi-gen/stage-pranch/00-install/files/firstboot.sh
+          random_password="$(openssl rand -base64 32)"
+          sudo tee /tmp/pi-gen/config >/dev/null <<EOF
+          IMG_NAME='pizza-ranch-display'
+          PI_GEN_RELEASE='Pizza Ranch Digital Media Controller'
+          RELEASE='trixie'
+          TARGET_HOSTNAME='pr-display'
+          FIRST_USER_NAME='pranch'
+          FIRST_USER_PASS='$random_password'
+          DISABLE_FIRST_BOOT_USER_RENAME=1
+          ENABLE_SSH=0
+          ENABLE_CLOUD_INIT=1
+          LOCALE_DEFAULT='en_US.UTF-8'
+          KEYBOARD_KEYMAP='us'
+          KEYBOARD_LAYOUT='English (US)'
+          TIMEZONE_DEFAULT='America/Chicago'
+          DEPLOY_COMPRESSION='xz'
+          STAGE_LIST='stage0 stage1 stage2 stage3 stage-pranch'
+          EOF
+          sudo touch /tmp/pi-gen/stage2/SKIP_IMAGES /tmp/pi-gen/stage4/SKIP_IMAGES /tmp/pi-gen/stage5/SKIP_IMAGES
+      - name: Build image
+        run: cd /tmp/pi-gen && sudo ./build.sh
+      - name: Collect and checksum image
+        run: |
+          image="$(find /tmp/pi-gen/deploy -maxdepth 1 -name '*.img.xz' -print -quit)"
+          test -n "$image"
+          cp "$image" Pizza-Ranch-Display-32bit.img.xz
+          sha256sum Pizza-Ranch-Display-32bit.img.xz > Pizza-Ranch-Display-32bit.img.xz.sha256
+      - name: Publish downloadable SD image release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: sd-image-${{ github.run_number }}
+          name: Pizza Ranch Display SD Image ${{ github.run_number }}
+          body: Flash the .img.xz file with Raspberry Pi Imager. Set the restaurant Wi-Fi in Imager customization, then boot the Pi and scan the QR code shown on the TV.
+          files: |
+            Pizza-Ranch-Display-32bit.img.xz
+            Pizza-Ranch-Display-32bit.img.xz.sha256
+

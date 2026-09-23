@@ -3,7 +3,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#9d1d20"><meta name="apple-mobile-web-app-capable" content="yes">
   <title>Pizza Ranch Digital Media Controller</title>
-  <link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/style.css?v=20260920.4">
+  <link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/style.css?v=20260923.1">
 </head><body>
   <main class="shell">
     <header><div class="brand">PR</div><div><strong>Pizza Ranch</strong><span>Digital Media Controller</span></div></header>
@@ -33,6 +33,7 @@
     <dialog id="location-dialog"><form id="location-form"><h2>Add location</h2><label>Location name<input id="location-name" required minlength="2" maxlength="80"></label><div class="dialog-actions"><button type="button" class="quiet" data-close="location-dialog">Cancel</button><button>Add location</button></div><p id="location-message" role="alert"></p></form></dialog>
     <dialog id="user-dialog"><form id="user-form"><h2 id="user-title">Add user</h2><input type="hidden" id="user-id"><label>Email<input id="user-email" type="email" required></label><label>Display name<input id="user-name" required minlength="2" maxlength="80"></label><label class="check"><input id="user-admin" type="checkbox"> System administrator with access to all locations</label><label class="check"><input id="user-active" type="checkbox" checked> Account active</label><h3>Location permissions</h3><div id="user-locations"></div><div class="dialog-actions"><button type="button" class="quiet" data-close="user-dialog">Cancel</button><button>Save user</button></div><p id="user-message" role="alert"></p></form></dialog>
     <dialog id="campaign-dialog"><form id="campaign-form"><h2 id="campaign-title">Add campaign</h2><input type="hidden" id="campaign-id"><label>Campaign name<input id="campaign-name" required minlength="2" maxlength="80"></label><div class="campaign-options"><label>Seconds per image<input id="campaign-seconds" type="number" min="3" max="300" value="10" required></label><label class="check"><input id="campaign-muted" type="checkbox" checked> Mute video sound</label></div><h3>Advertise at locations</h3><div id="campaign-locations" class="location-checks"></div><label>Campaign images and videos<input id="campaign-files" type="file" accept="image/jpeg,image/png,image/webp,video/mp4" multiple></label><small>JPEG, PNG, WebP, or MP4. Each file can be up to 100 MB. Existing files stay when editing.</small><div class="dialog-actions"><button type="button" class="quiet" data-close="campaign-dialog">Cancel</button><button id="save-campaign">Save campaign</button></div><p id="campaign-message" role="alert"></p></form></dialog>
+    <dialog id="enroll-dialog"><form id="enroll-form"><h2>Add this TV</h2><p>Confirm where this screen will be used. The code contains no password.</p><input type="hidden" id="enroll-code"><label>Screen name<input id="enroll-name" required minlength="2" maxlength="80"></label><label>Location<select id="enroll-location" required></select></label><div class="dialog-actions"><button type="button" class="quiet" data-close="enroll-dialog">Cancel</button><button id="approve-enrollment">Add TV</button></div><p id="enroll-message" role="alert"></p></form></dialog>
     <footer><span id="status">Checking cloud service…</span></footer>
-  </main><script src="/app.js?v=20260920.4" defer></script>
+  </main><script src="/app.js?v=20260923.1" defer></script>
 </body></html>

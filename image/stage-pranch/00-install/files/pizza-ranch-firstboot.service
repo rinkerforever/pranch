@@ -1,0 +1,16 @@
+[Unit]
+Description=Prepare the Pizza Ranch display appliance
+Wants=network-online.target
+After=network-online.target systemd-machine-id-commit.service
+ConditionPathExists=!/var/lib/pizza-ranch-firstboot/complete
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/pizza-ranch-firstboot
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
