@@ -416,7 +416,7 @@ async function api(request, env, url) {
       env.DB.prepare('DELETE FROM screens WHERE device_id=?').bind(pending.device_id),
       env.DB.prepare('DELETE FROM devices WHERE id=?').bind(pending.device_id),
       env.DB.prepare(`INSERT INTO devices(id,location_id,name,device_type,credential_hash,last_seen_at)
-        VALUES(?,?,?,'cloud-display',?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).bind(pending.device_id,locationId,name,await sha256(token)),
+        VALUES(?,?,?,'display',?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).bind(pending.device_id,locationId,name,await sha256(token)),
       env.DB.prepare('INSERT INTO screens(id,location_id,name,device_id) VALUES(?,?,?,?)').bind(screenId,locationId,name,pending.device_id),
       env.DB.prepare(`INSERT INTO screen_assignments(screen_id,source_type,source_value,desired_revision,updated_by)
         VALUES(?,'menu','',1,?)`).bind(screenId,session.profile.id),
