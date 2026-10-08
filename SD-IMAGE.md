@@ -8,7 +8,7 @@ This image is for a Raspberry Pi 3 B+ and creates a direct cloud display. No ter
 2. Open Raspberry Pi Imager, choose **Use custom**, and select the downloaded file.
 3. Select the SD card. In OS customization, enter the restaurant Wi-Fi name, password, Wi-Fi country, and timezone. Leave SSH disabled.
 4. Write the card, insert it into the Pi, connect HDMI, and turn the Pi on. Ethernet also works without Wi-Fi setup.
-5. The first boot can take 10–20 minutes while Raspberry Pi OS installs updates. The Pi reboots automatically.
+5. The bundled controller installs locally without waiting for package servers. The Pi reboots automatically, normally within a few minutes.
 6. Scan the QR code on the TV. Sign in at `display.projectaimnet.com`, select the location, name the TV, and choose **Add TV**.
 7. The Pi immediately checks GitHub for the newest display release. It then loads the page or marketing campaign selected in the cloud controller.
 
@@ -17,4 +17,3 @@ The QR code contains only the HTTPS setup address and a short-lived six-digit co
 ## Build a new image
 
 In GitHub, open **Actions**, choose **Build Raspberry Pi SD image**, and select **Run workflow**. A successful run publishes a new GitHub release containing the compressed image and SHA-256 checksum.
-

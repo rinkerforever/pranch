@@ -2,9 +2,7 @@
 set -Eeuo pipefail
 
 state=/var/lib/pizza-ranch-firstboot
-archive="$state/Pizza-Ranch-Kiosk.zip"
 fallback=/usr/local/lib/pizza-ranch-firstboot/Pizza-Ranch-Kiosk.zip
-release=https://raw.githubusercontent.com/rinkerforever/pranch/main/Pizza-Ranch-Kiosk.zip
 install -d -m 700 "$state"
 
 machine="$(cat /etc/machine-id)"
@@ -14,19 +12,9 @@ if [[ -n "$machine" ]]; then
   printf '%s\n' "$hostname" > /etc/hostname
 fi
 
-# Prefer the newest GitHub release. The baked copy lets an already-downloaded
-# image remain recoverable if GitHub is briefly unavailable.
-if curl --fail --location --silent --show-error --retry 10 --retry-delay 6 \
-    --connect-timeout 15 --max-time 300 -H 'Cache-Control: no-cache' \
-    "$release" -o "$archive.download"; then
-  mv "$archive.download" "$archive"
-else
-  cp "$fallback" "$archive"
-fi
-
 rm -rf "$state/extracted"
 install -d -m 700 "$state/extracted"
-python3 - "$archive" "$state/extracted" <<'PY'
+python3 - "$fallback" "$state/extracted" <<'PY'
 from pathlib import Path, PurePosixPath
 import stat, sys, zipfile
 archive, destination = map(Path, sys.argv[1:])
@@ -47,9 +35,8 @@ for required in ('install.sh', 'ranch/cloud_node.py', 'deploy/pizza-ranch-cloud-
         raise SystemExit('Release is missing ' + required)
 PY
 
-export SUDO_USER=pranch RANCH_TIMEZONE=America/Chicago
+export SUDO_USER=pranch RANCH_TIMEZONE=America/Chicago RANCH_IMAGE_INSTALL=1
 bash "$state/extracted/pizza-ranch/install.sh" cloud-display
 touch "$state/complete"
 systemctl disable pizza-ranch-firstboot.service
 systemctl reboot
-
