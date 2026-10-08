@@ -37,7 +37,8 @@ async function pagesFor(locationId, env) {
 }
 
 function publicSource(sourceType, sourceValue, pages = pageDefaults) {
-  if (sourceType === 'campaign') return `campaign:${sourceValue}`;
+  const campaignId = campaignIdFor(sourceType,sourceValue);
+  if (campaignId) return `campaign:${campaignId}`;
   if (sourceType === 'custom_url') {
     const custom = (pages.custom_pages || []).find((page) => page.url === sourceValue);
     return custom ? `custom:${custom.id}` : 'menu';
@@ -93,6 +94,12 @@ async function inviteUser(request, session, env) {
     VALUES(?,?,?,?,?,1)`).bind(invited.id,invited.id,email,displayName,body.system_admin ? 1 : 0).run();
   await replaceAssignments(invited.id,assignments,env);
   return json({ ok:true, id:invited.id },201);
+}
+
+function campaignIdFor(sourceType, sourceValue) {
+  if (sourceType === 'campaign') return String(sourceValue || '');
+  if (sourceType === 'playlist' && String(sourceValue || '').startsWith('campaign:')) return String(sourceValue).slice(9);
+  return null;
 }
 
 async function sha256Bytes(value) {
@@ -333,9 +340,10 @@ async function deviceApi(request, env, url) {
   if (url.pathname === '/api/device/state') {
     const pages = await pagesFor(display.location_id,env);
     const desiredSource = publicSource(display.source_type,display.source_value,pages);
-    const campaign = display.source_type === 'campaign' ? await campaignManifest(display.source_value,env) : null;
+    const campaignId = campaignIdFor(display.source_type,display.source_value);
+    const campaign = campaignId ? await campaignManifest(campaignId,env) : null;
     return json({ device_id:display.device_id, screen_id:display.screen_id, location_id:display.location_id,
-      desired_source:campaign ? desiredSource : (display.source_type === 'campaign' ? 'menu' : desiredSource), pages, campaign });
+      desired_source:campaign ? desiredSource : (campaignId ? 'menu' : desiredSource), pages, campaign });
   }
   return json({ error: 'Not found.' }, 404);
 }
@@ -564,7 +572,8 @@ async function api(request, env, url) {
       ...locationIds.map((id)=>env.DB.prepare('INSERT INTO campaign_locations(campaign_id,location_id) VALUES(?,?)').bind(campaignId,id)),
     ];
     for (const locationId of removed) statements.push(env.DB.prepare(`UPDATE screen_assignments SET source_type='menu',source_value='',desired_revision=desired_revision+1
-      WHERE source_type='campaign' AND source_value=? AND screen_id IN (SELECT id FROM screens WHERE location_id=?)`).bind(campaignId,locationId));
+      WHERE ((source_type='campaign' AND source_value=?) OR (source_type='playlist' AND source_value=?))
+      AND screen_id IN (SELECT id FROM screens WHERE location_id=?)`).bind(campaignId,`campaign:${campaignId}`,locationId));
     await env.DB.batch(statements); return json({ ok:true });
   }
   if (campaignMatch && request.method === 'DELETE') {
@@ -573,7 +582,8 @@ async function api(request, env, url) {
     if (!await canManageCampaign(session,campaignId,env)) return json({ error:'Content-management permission required.' },403);
     const items = (await env.DB.prepare('SELECT object_key FROM campaign_items WHERE campaign_id=?').bind(campaignId).all()).results || [];
     await env.DB.batch([
-      env.DB.prepare(`UPDATE screen_assignments SET source_type='menu',source_value='',desired_revision=desired_revision+1 WHERE source_type='campaign' AND source_value=?`).bind(campaignId),
+      env.DB.prepare(`UPDATE screen_assignments SET source_type='menu',source_value='',desired_revision=desired_revision+1
+        WHERE (source_type='campaign' AND source_value=?) OR (source_type='playlist' AND source_value=?)`).bind(campaignId,`campaign:${campaignId}`),
       env.DB.prepare('DELETE FROM campaign_items WHERE campaign_id=?').bind(campaignId),
       env.DB.prepare('DELETE FROM campaign_locations WHERE campaign_id=?').bind(campaignId),
       env.DB.prepare('DELETE FROM campaigns WHERE id=?').bind(campaignId),
@@ -651,7 +661,10 @@ async function api(request, env, url) {
         if (!campaign) return json({ error:'Campaign is not assigned to this location.' },400);
         const count = await env.DB.prepare('SELECT COUNT(*) count FROM campaign_items WHERE campaign_id=?').bind(campaignId).first();
         if (!count.count) return json({ error:'Add media to this campaign before selecting it.' },400);
-        type = 'campaign'; value = campaignId;
+        // The original production schema permits playlist assignments but not a
+        // separate campaign type. Prefix the value so ordinary local playlists
+        // and cloud marketing campaigns remain distinct without a destructive migration.
+        type = 'playlist'; value = `campaign:${campaignId}`;
       } else if (requestedSource.startsWith('custom:')) {
         const page = (pages.custom_pages || []).find((item) => item.id === requestedSource.slice(7));
         if (!page) return json({ error: 'Custom page not found.' }, 400);
