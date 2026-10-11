@@ -495,6 +495,27 @@ async function api(request, env, url) {
     if (!response.ok) return json({ error:response.status === 429 ? 'Please wait before sending another invitation.' : 'Supabase could not resend the invitation.' },response.status === 429 ? 429 : 502);
     return json({ ok:true });
   }
+  const passwordResetMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/reset-password$/);
+  if (passwordResetMatch && request.method === 'POST') {
+    if (!systemAdmin(session)) return json({ error:'System administrator access required.' },403);
+    if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error:'Password recovery is not configured yet.' },503);
+    const userId = decodeURIComponent(passwordResetMatch[1]);
+    const profile = await env.DB.prepare('SELECT email,active FROM user_profiles WHERE id=?').bind(userId).first();
+    if (!profile) return json({ error:'User account not found.' },404);
+    if (!profile.active) return json({ error:'Enable this account before sending a password reset.' },400);
+    const authResponse = await fetch(`${env.SUPABASE_URL.replace(/\/$/,'')}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+      headers:{ apikey:env.SUPABASE_SERVICE_ROLE_KEY, authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` },
+    });
+    if (!authResponse.ok) return json({ error:'The Supabase user account could not be found.' },404);
+    const authUser = await authResponse.json();
+    if (!authUser.email_confirmed_at && !authUser.confirmed_at) return json({ error:'This account has not been activated. Resend its invitation instead.' },409);
+    const response = await fetch(`${env.SUPABASE_URL.replace(/\/$/,'')}/auth/v1/recover?redirect_to=${encodeURIComponent(new URL(request.url).origin + '/accept-invite')}`, {
+      method:'POST', headers:{ 'content-type':'application/json', apikey:env.SUPABASE_PUBLISHABLE_KEY },
+      body:JSON.stringify({ email:profile.email }),
+    });
+    if (!response.ok) return json({ error:response.status === 429 ? 'Please wait before sending another password reset.' : 'Supabase could not send the password reset email.' },response.status === 429 ? 429 : 502);
+    return json({ ok:true });
+  }
   const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
   if (userMatch && request.method === 'PATCH') {
     if (!systemAdmin(session)) return json({ error:'System administrator access required.' },403);
