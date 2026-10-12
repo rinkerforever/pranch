@@ -84,10 +84,14 @@ function tableSymbol(t){
   });return group;
 }
 function renderFloor(){
-  const floor=$('floor');floor.replaceChildren();floor.setAttribute('viewBox',viewBox.join(' '));
+  const viewport=$('floor');viewport.replaceChildren();viewport.setAttribute('viewBox',viewBox.join(' '));
+  const clip=svg('clipPath',{id:'floor-view-clip',clipPathUnits:'userSpaceOnUse'});
+  clip.append(svg('rect',{id:'floor-view-bounds',x:viewBox[0],y:viewBox[1],width:viewBox[2],height:viewBox[3]}));
+  const defs=svg('defs');defs.append(clip);
+  const floor=svg('g',{'clip-path':'url(#floor-view-clip)'});viewport.append(defs,floor);
   if(state.background)floor.append(svg('image',{href:demo?state.background.dataUrl:endpoint('floorplan')+`?v=${version}`,x:0,y:0,width:1660,height:950,preserveAspectRatio:'xMidYMid meet',opacity:.48}));
   else{
-    floor.append(svg('rect',{x:10,y:0,width:1600,height:860,fill:'#f8f9f4'}),svg('path',{d:WALL_PATH+' M672 644V860',class:'wall'}));
+    floor.append(svg('rect',{x:10,y:0,width:1600,height:870,fill:'#f8f9f4'}),svg('path',{d:WALL_PATH,class:'wall'}));
     for(const[text,x,y]of ROOM_LABELS){const small=!['Funzone','Kitchen'].includes(text);const n=svg('text',{x,y,class:`room-label${small?' small':''}${text.startsWith('Section')?' section':''}`},text);if(text.includes('restroom'))n.setAttribute('transform',`rotate(-90 ${x} ${y})`);floor.append(n);}
     floor.append(svg('rect',{x:1475,y:485,width:94,height:42,rx:3,fill:'none',stroke:'#b1b8ad','stroke-width':2}));
   }
@@ -172,7 +176,7 @@ $('layout-form').onsubmit=async e=>{e.preventDefault();if(!tableDraft)return;e.s
 $('remove-table').onclick=async()=>{if(!tableDraft?.id)return;if(await confirmChange('Remove table?',`Remove ${label(tableDraft)} from this layout? You can add it again in Layout editor.`)&&await act({type:'removeTable',id:tableDraft.id})){tableDraft=null;selected.clear();$('layout-panel').hidden=true;renderFloor();}};
 for(const[id,factor]of [['zoom-in',.75],['zoom-out',1.333]])$(id).onclick=()=>{const[x,y,w,h]=viewBox;const nw=Math.min(2000,Math.max(120,w*factor)),nh=h*(nw/w);viewBox=[x+(w-nw)/2,y+(h-nh)/2,nw,nh];renderFloor();};$('zoom-fit').onclick=()=>setView(view);
 // Pan the canvas from an empty area, keeping table dragging exclusive to Layout editor.
-$('floor').addEventListener('pointerdown',e=>{if(e.target.closest('.table-node'))return;const floor=$('floor'),start=[e.clientX,e.clientY],box=[...viewBox],matrix=floor.getScreenCTM();floor.setPointerCapture(e.pointerId);const move=ev=>{viewBox=[box[0]-(ev.clientX-start[0])/matrix.a,box[1]-(ev.clientY-start[1])/matrix.d,box[2],box[3]];floor.setAttribute('viewBox',viewBox.join(' '));};const end=()=>{floor.removeEventListener('pointermove',move);floor.removeEventListener('pointerup',end);};floor.addEventListener('pointermove',move);floor.addEventListener('pointerup',end);});
+$('floor').addEventListener('pointerdown',e=>{if(e.target.closest('.table-node'))return;const floor=$('floor'),start=[e.clientX,e.clientY],box=[...viewBox],matrix=floor.getScreenCTM();floor.setPointerCapture(e.pointerId);const move=ev=>{viewBox=[box[0]-(ev.clientX-start[0])/matrix.a,box[1]-(ev.clientY-start[1])/matrix.d,box[2],box[3]];floor.setAttribute('viewBox',viewBox.join(' '));const bounds=$('floor-view-bounds');bounds.setAttribute('x',viewBox[0]);bounds.setAttribute('y',viewBox[1]);};const end=()=>{floor.removeEventListener('pointermove',move);floor.removeEventListener('pointerup',end);};floor.addEventListener('pointermove',move);floor.addEventListener('pointerup',end);});
 $('upload').onchange=async()=>{
   const file=$('upload').files[0];if(!file)return;
   if(file.size>20*1024*1024){toast('Choose a file smaller than 20 MB.',true);return;}
