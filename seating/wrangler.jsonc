@@ -1,0 +1,37 @@
+{
+  "name": "pizza-ranch-seating",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "vars": {
+    "SUPABASE_URL": "https://ouchrveuiqhzkkyjdhau.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im91Y2hydmV1aXFoemtreWpkaGF1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk3NzU4MDYsImV4cCI6MjEwNTM1MTgwNn0.q9aBhlfMY0NmO92UN9DagUgurAB91So1pnp563iIUJQ"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "migrations_dir": "migrations",
+      "database_name": "pizza-ranch-control",
+      "database_id": "709994bc-3d93-4a9e-adc2-8baf30fd66b2"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "bucket_name": "pizza-ranch-media",
+      "binding": "MEDIA"
+    }
+  ],
+  "routes": [
+    {
+      "custom_domain": true,
+      "pattern": "seating.projectaimnet.com"
+    }
+  ]
+}
