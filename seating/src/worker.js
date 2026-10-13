@@ -1,3 +1,5 @@
+import {guestApi} from './guest.js';
+import qrcode from 'qrcode-generator';
 import { upgradeNumbering } from '../public/floor.js';
 import { initialState, applyAction, AppError } from './model.js';
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
@@ -55,6 +57,7 @@ async function api(request,env,ctx,url){
   if(url.pathname==='/api/logout'&&request.method==='POST'){
     ctx.cookies.push(cookie('seat_access','',0),cookie('seat_refresh','',0));return json({ok:true});
   }
+  if(url.pathname.startsWith('/api/guest/'))return guestApi(request,env,ctx,url,{json,readBody,cookies});
   const profile=await identity(request,env,ctx);
   if(url.pathname==='/api/session'){
     const rows=profile.system_admin?await env.DB.prepare("SELECT id,name,'admin' AS role FROM locations WHERE active=1 ORDER BY name").all():await env.DB.prepare('SELECT l.id,l.name,g.role FROM locations l JOIN seating_grants g ON g.location_id=l.id WHERE l.active=1 AND g.user_id=? ORDER BY l.name').bind(profile.id).all();
@@ -74,7 +77,7 @@ async function api(request,env,ctx,url){
       return json({ok:true});
     }
   }
-  const match=url.pathname.match(/^\/api\/locations\/([^/]+)\/(state|actions|floorplan)$/);
+  const match=url.pathname.match(/^\/api\/locations\/([^/]+)\/(state|actions|floorplan|qr)$/);
   if(!match)throw new AppError('Not found.',404);
   const id=decodeURIComponent(match[1]),resource=match[2],role=await roleFor(env,profile,id);
   if(resource==='floorplan'&&request.method==='GET'){
@@ -82,6 +85,10 @@ async function api(request,env,ctx,url){
     if(!state.background)throw new AppError('No uploaded floor plan.',404);
     const object=await env.MEDIA.get(state.background.key);if(!object)throw new AppError('Floor plan file not found.',404);
     return new Response(object.body,{headers:{'content-type':state.background.mime,'cache-control':'private, no-store'}});
+  }
+  if(resource==='qr'&&request.method==='GET'){
+    const code=qrcode(0,'M');code.addData(`${url.origin}/join.html?location=${encodeURIComponent(id)}`);code.make();
+    return new Response(code.createSvgTag({cellSize:6,margin:24,scalable:true}),{headers:{'content-type':'image/svg+xml','cache-control':'private, no-store'}});
   }
   const row=await loadState(env,id,profile);
   if(resource==='state'&&request.method==='GET')return json({state:JSON.parse(row.state_json),version:row.version,role});

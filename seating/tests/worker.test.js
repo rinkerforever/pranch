@@ -54,3 +54,46 @@ test('legacy numbering survives repeated reads and persists with the next saved 
   assert.equal(stored.numberingVersion,1);assert.equal(stored.tables.find(t=>t.id==='A-10').number,'11');
   assert.equal(stored.tables.find(t=>t.id==='A-10').status,'in_use');f.sqlite.close();
 });
+
+async function guestCall(f,{token='',body,ip='192.0.2.1',origin='https://seating.example.test',location='loc'}={}){
+ return f.env && worker.fetch(new Request(`https://seating.example.test/api/guest/${location}`,{method:body?'POST':'GET',headers:{cookie:token,origin,'CF-Connecting-IP':ip,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),f.env,{waitUntil(){}});
+}
+async function openGuestCheckin(f){await f.call('/api/locations/loc/state');return f.call('/api/locations/loc/actions',{version:0,action:{type:'guestSettings',enabled:true,maxPartySize:8}});}
+const guestJoin={action:'join',name:'Guest One',size:4,notes:'High chair',website:''};
+test('guest check-in is closed by default, scoped to an active location and enforces origin and size',async t=>{
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
+ const f=fixture(),first=await guestCall(f),token=first.headers.get('set-cookie').split(';')[0];
+ assert.equal((await first.json()).enabled,false);
+ assert.equal((await guestCall(f,{token,body:guestJoin})).status,409);
+ await openGuestCheckin(f);
+ assert.equal((await guestCall(f,{body:guestJoin})).status,400);
+ assert.equal((await guestCall(f,{token,body:guestJoin,origin:'https://evil.example'})).status,403);
+ assert.equal((await guestCall(f,{token,body:{...guestJoin,size:9}})).status,400);
+ assert.equal((await guestCall(f,{token,body:{...guestJoin,website:'spam'}})).status,400);
+ assert.equal((await guestCall(f,{location:'missing'})).status,404);
+ f.sqlite.exec("UPDATE locations SET active=0 WHERE id='loc'");assert.equal((await guestCall(f,{token})).status,404);f.sqlite.close();
+});
+test('concurrent duplicate submissions create one party and private status exposes only that guest',async t=>{
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
+ const f=fixture();await openGuestCheckin(f);
+ const first=await guestCall(f),token=first.headers.get('set-cookie').split(';')[0];
+ const results=await Promise.all([guestCall(f,{token,body:guestJoin}),guestCall(f,{token,body:guestJoin})]);
+ assert.deepEqual(results.map(r=>r.status),[200,200]);
+ let staff=await(await f.call('/api/locations/loc/state')).json();assert.equal(staff.state.parties.length,1);assert.equal(staff.state.parties[0].source,'qr');
+ const second=await guestCall(f),otherToken=second.headers.get('set-cookie').split(';')[0];assert.equal((await second.json()).party,null);
+ assert.equal((await guestCall(f,{token:otherToken,body:guestJoin})).status,429);
+ const publicData=await(await guestCall(f,{token})).json();assert.deepEqual(Object.keys(publicData.party).sort(),['arrivedAt','name','ready','size','status']);assert.ok(!JSON.stringify(publicData).includes('guestTokenHash'));assert.ok(!JSON.stringify(publicData).includes('High chair'));
+ await f.call('/api/locations/loc/actions',{version:staff.version,action:{type:'readyParty',id:staff.state.parties[0].id}});
+ assert.equal((await(await guestCall(f,{token})).json()).party.ready,true);
+ assert.equal((await guestCall(f,{token:otherToken,body:{action:'cancel'}})).status,409);
+ assert.equal((await guestCall(f,{token,body:{action:'cancel'}})).status,200);
+ assert.equal((await(await guestCall(f,{token})).json()).party.status,'cancelled');f.sqlite.close();
+});
+test('closed check-in still serves private status; QR images require staff access',async t=>{
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
+ const f=fixture();await openGuestCheckin(f);const first=await guestCall(f),token=first.headers.get('set-cookie').split(';')[0];await guestCall(f,{token,body:guestJoin});
+ const staff=await(await f.call('/api/locations/loc/state')).json();await f.call('/api/locations/loc/actions',{version:staff.version,action:{type:'guestSettings',enabled:false,maxPartySize:8}});
+ const status=await(await guestCall(f,{token})).json();assert.equal(status.enabled,false);assert.equal(status.party.name,'Guest One');
+ const qr=await f.call('/api/locations/loc/qr');assert.equal(qr.status,200);assert.match(await qr.text(),/<svg/);
+ const anonymous=await worker.fetch(new Request('https://seating.example.test/api/locations/loc/qr'),f.env,{waitUntil(){}});assert.equal(anonymous.status,401);f.sqlite.close();
+});

@@ -116,11 +116,12 @@ function renderWait(){
     const row=el('div',{class:`guest${p.id===partyId?' active':''}`,tabindex:0,role:'button','aria-label':`${p.name}, ${p.size} guests, waiting ${minutes(p.arrivedAt)} minutes`});
     const main=el('div',{class:'guest-main'});main.append(el('strong',{},p.name),el('small',{},`#${index+1}`));
     const meta=el('div',{class:'guest-meta'});meta.append(el('span',{},`${p.size} guests`),el('span',{},`${minutes(p.arrivedAt)} min wait`));row.append(main,meta);
+    if(p.source==='qr')row.append(el('small',{class:'qr-source'},p.readyAt?'QR guest · Ready — return to host':'QR guest check-in'));
     if(p.notes)row.append(el('p',{class:'guest-note'},p.notes));
     const choose=()=>{partyId=p.id;selected.clear();renderWait();renderSelection();renderRecommendations();renderFloor();$('recommend-panel').scrollIntoView({block:'nearest',behavior:'smooth'});};const fit=suggestTables(state.tables,p.size,1)[0];const fitButton=el('button',{class:'guest-fit',type:'button'},fit?`Suggested: ${fit.map(label).join(' + ')} · View options`:'Find tables');fitButton.onclick=e=>{e.stopPropagation();choose();};row.append(fitButton);row.onclick=choose;row.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();choose();}};
     if(partyId===p.id&&canWrite()){
       const actions=el('div',{class:'guest-actions'}),edit=el('button',{class:'quiet small'},'Edit'),cancel=el('button',{class:'quiet small danger'},'Remove');
-      edit.onclick=e=>{e.stopPropagation();openGuest(p);};cancel.onclick=async e=>{e.stopPropagation();if(await confirmChange('Remove waiting party?',`Remove ${p.name} from the waiting list?`))await act({type:'cancelParty',id:p.id});};actions.append(edit,cancel);row.append(actions);
+      edit.onclick=e=>{e.stopPropagation();openGuest(p);};cancel.onclick=async e=>{e.stopPropagation();if(await confirmChange('Remove waiting party?',`Remove ${p.name} from the waiting list?`))await act({type:'cancelParty',id:p.id});};actions.append(edit,cancel);if(p.source==='qr'){const ready=el('button',{class:'small'},p.readyAt?'Ready sent':'Mark ready');ready.disabled=!!p.readyAt;ready.onclick=async e=>{e.stopPropagation();if(await act({type:'readyParty',id:p.id}))toast('Guest status page updated: table ready.');};actions.append(ready);}row.append(actions);
     }return row;
   }));
 }
@@ -156,6 +157,7 @@ function renderAllowed(allowed=[]){const area=$('table-area').value,kind=$('tabl
   for(const t of state.tables.filter(t=>t.area===area&&t.id!==tableDraft?.id&&t.kind==='table')){const l=el('label'),c=el('input',{type:'checkbox',value:t.id});c.checked=allowed.includes(t.id);l.append(c,document.createTextNode(`${label(t)} · ${t.capacity} seats`));$('allowed-tables').append(l);}
 }
 function render(){
+  $('guest-checkin').hidden=!canWrite();
   $('phone-location').textContent=locations.find(l=>l.id===locationId)?.name||'';
   $('edit-tab').hidden=!canEdit();if(!canEdit())editing=false;$('tablet-wait').hidden=editing;
   $('live-tab').classList.toggle('active',!editing);$('edit-tab').classList.toggle('active',editing);$('editor-toolbar').hidden=!editing;$('wait-panel').hidden=editing;$('selection-panel').hidden=editing;$('layout-panel').hidden=!editing||!tableDraft;
@@ -204,3 +206,13 @@ setInterval(()=>{if(!document.hidden&&locationId&&!editing)refresh();},5000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh(true);});
 window.addEventListener('online',()=>refresh(true));window.addEventListener('offline',()=>sync(false,'Offline · changes unavailable'));
 loadSession().catch(e=>{if(e.status!==401)toast(e.message,true);});
+
+$('guest-checkin').onclick=()=>{
+ const loc=locations.find(l=>l.id===locationId),config=state.guestSettings||{enabled:false,maxPartySize:12};
+ $('checkin-location').textContent=loc.name;$('checkin-summary').textContent=config.enabled?'Guests can join online now.':'Online check-in is currently closed.';
+ $('checkin-enabled').checked=config.enabled;$('checkin-max').value=config.maxPartySize;
+ $('checkin-code').hidden=demo;
+ if(!demo){$('checkin-qr').src=endpoint('qr');$('checkin-link').href=`/join.html?location=${encodeURIComponent(locationId)}`;$('checkin-print').href=`/sign.html?location=${encodeURIComponent(locationId)}`;}
+ $('checkin-dialog').showModal();
+};
+$('checkin-form').onsubmit=async e=>{e.preventDefault();const button=$('checkin-save');button.disabled=true;try{if(await act({type:'guestSettings',enabled:$('checkin-enabled').checked,maxPartySize:Number($('checkin-max').value)})){$('checkin-summary').textContent=state.guestSettings.enabled?'Guests can join online now.':'Online check-in is closed. Existing guests can still check their status.';toast('Guest check-in settings saved.');}}finally{button.disabled=false;}};

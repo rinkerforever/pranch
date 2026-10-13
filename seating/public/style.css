@@ -78,3 +78,5 @@
 }
 @media(max-width:599px){.filters button[data-view=Dining]{display:none}}
 @media(max-width:599px){.brand .brand-subtitle{display:none}}
+#checkin-qr{display:block;width:220px;max-width:100%;margin:16px auto}#checkin-code{display:flex;flex-direction:column;gap:12px}.checkin-toggle{flex-direction:row;align-items:center}.checkin-toggle input{width:22px;min-height:22px;height:22px}.qr-source{display:block;margin-top:8px;color:#2c7050}.guest-actions{flex-wrap:wrap}
+@media(min-width:600px) and (max-width:850px){.topbar{flex-wrap:wrap;height:auto;min-height:62px}.top-actions{width:100%;justify-content:flex-end}.topbar .top-actions select{margin-right:auto}}

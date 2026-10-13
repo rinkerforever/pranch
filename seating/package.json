@@ -10,6 +10,11 @@
     "check": "node --check src/worker.js && node --check src/model.js && node --check public/app.js",
     "prepare-assets": "node scripts/prepare-assets.js"
   },
-  "dependencies": { "pdfjs-dist": "^5.4.0" },
-  "devDependencies": { "wrangler": "^4.39.0" }
+  "dependencies": {
+    "pdfjs-dist": "^5.4.0",
+    "qrcode-generator": "1.4.4"
+  },
+  "devDependencies": {
+    "wrangler": "^4.39.0"
+  }
 }

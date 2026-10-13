@@ -30,7 +30,14 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
   if(['layout','addTable','removeTable','background'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
-  if(type==='addParty') {
+  if(type==='guestSettings') {
+    if(typeof action.enabled!=='boolean'||!integer(action.maxPartySize,1,30))fail('Choose a maximum party size from 1 to 30.');
+    state.guestSettings={enabled:action.enabled,maxPartySize:action.maxPartySize};
+  } else if(type==='readyParty') {
+    const party=state.parties.find(p=>p.id===action.id&&p.status==='waiting');
+    if(!party)fail('This party is no longer waiting.');
+    party.readyAt=now;
+  } else if(type==='addParty') {
     const name=clean(action.name,80), size=Number(action.size), notes=clean(action.notes,300);
     if(!name || !integer(size,1,100)) fail('Enter a name and party size between 1 and 100.');
     if(state.parties.filter(p=>p.status==='waiting').length>=200) fail('The waiting list is full.');
