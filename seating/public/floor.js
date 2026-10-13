@@ -3,7 +3,7 @@ export const AREAS = ['A', 'B', 'C', 'Rose City', 'Azalea Trail', 'Piney Woods']
 export function initialTables() {
   const tables = [];
   const add = (area, number, x, y, capacity, orientation = 'lr', kind = 'table') => tables.push({
-    id: `${area}-${number}`, area, number: String(number), x, y, capacity,
+    id: `${area}-${number}`, area, number: String(number + 1), x, y, capacity,
     orientation, kind, status: 'open', group: null, party: null, seatedAt: null, allowed: [],
   });
   [70,60,50,40,30,20].forEach((n,i) => add('C',n,200+i*63,668,null,'lr','booth'));
@@ -35,3 +35,17 @@ export const ROOM_LABELS = [
   ['Rose City',1120,167],['Azalea Trail',1300,167],['Piney Woods',1500,185],
   ['Entrance',1565,354],['Host',1520,513],['Section C',384,714],['Section B',998,680],['Section A',1460,568],
 ];
+
+// Stable IDs preserve assignments and combination links when visible numbers change.
+export function upgradeNumbering(state) {
+  if (state.numberingVersion === 1) return state;
+  for (const table of state.tables) {
+    if (/^\d+$/.test(table.number)) table.number = String(Number(table.number) + 1);
+  }
+  state.numberingVersion = 1;
+  return state;
+}
+export function openSeats(tables) {
+  const open = tables.filter(t => t.status === 'open');
+  return { count: open.reduce((sum,t) => sum + (t.capacity || 0), 0), unconfirmed: open.filter(t => !t.capacity).length };
+}

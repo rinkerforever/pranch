@@ -1,3 +1,4 @@
+import { upgradeNumbering } from '../public/floor.js';
 import { initialState, applyAction, AppError } from './model.js';
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
 const cookie=(name,value,age)=>`${name}=${encodeURIComponent(value)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${age}`;
@@ -29,7 +30,7 @@ async function roleFor(env,profile,id){
 }
 async function loadState(env,id,profile){
   const existing=await env.DB.prepare('SELECT version,state_json,updated_at FROM seating_state WHERE location_id=?').bind(id).first();
-  if(existing)return existing;
+  if(existing)return {...existing,state_json:JSON.stringify(upgradeNumbering(JSON.parse(existing.state_json)))};
   await env.DB.prepare('INSERT OR IGNORE INTO seating_state(location_id,version,state_json,updated_by) VALUES(?,0,?,?)').bind(id,JSON.stringify(initialState()),profile.id).run();
   return env.DB.prepare('SELECT version,state_json,updated_at FROM seating_state WHERE location_id=?').bind(id).first();
 }

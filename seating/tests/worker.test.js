@@ -36,3 +36,21 @@ test('staff grants permit only assigned locations and honor disabled accounts',a
   assert.equal((await f.call('/api/locations/loc/actions',{version:0,action:{type:'addParty',name:'Guest',size:2}},'viewer')).status,200);
   f.sqlite.exec("UPDATE user_profiles SET active=0 WHERE id='viewer'");assert.equal((await f.call('/api/session',null,'viewer')).status,403);f.sqlite.close();
 });
+
+test('legacy numbering survives repeated reads and persists with the next saved change',async t=>{
+  t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
+  const f=fixture();const original=await(await f.call('/api/locations/loc/state')).json();
+  delete original.state.numberingVersion;
+  for(const table of original.state.tables)table.number=String(Number(table.number)-1);
+  f.sqlite.prepare('UPDATE seating_state SET state_json=? WHERE location_id=?').run(JSON.stringify(original.state),'loc');
+  for(let i=0;i<2;i++){
+    const result=await(await f.call('/api/locations/loc/state')).json();
+    assert.equal(result.state.tables.find(t=>t.id==='A-10').number,'11');
+    assert.equal(result.version,0);
+  }
+  const response=await f.call('/api/locations/loc/actions',{version:0,action:{type:'status',ids:['A-10'],status:'in_use'}});
+  assert.equal(response.status,200);
+  const stored=JSON.parse(f.sqlite.prepare('SELECT state_json FROM seating_state').get().state_json);
+  assert.equal(stored.numberingVersion,1);assert.equal(stored.tables.find(t=>t.id==='A-10').number,'11');
+  assert.equal(stored.tables.find(t=>t.id==='A-10').status,'in_use');f.sqlite.close();
+});

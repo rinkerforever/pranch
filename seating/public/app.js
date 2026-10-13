@@ -1,4 +1,4 @@
-import { AREAS, WALL_PATH, ROOM_LABELS } from './floor.js';
+import { AREAS, WALL_PATH, ROOM_LABELS, upgradeNumbering, openSeats } from './floor.js';
 const $=id=>document.getElementById(id), NS='http://www.w3.org/2000/svg';
 const demo=new URLSearchParams(location.search).get('demo')==='1';
 let state=null,version=0,profile=null,locations=[],locationId=null,role='viewer',selected=new Set(),partyId=null,editing=false,tableDraft=null,editGuest=null,busy=false,view='Dining',viewBox=[140,550,1495,360],toastTimer,uploadBusy=false;
@@ -35,7 +35,7 @@ async function refresh(force=false){
   try{
     const data=demo?{state:JSON.parse(localStorage.getItem('seating-preview')||'null')||demoInitial(),version:version+1,role:'admin'}:await api(endpoint('state'));
     if(requestedLocation!==locationId||data.version<version)return;
-    if(force||data.version!==version||role!==data.role){state=data.state;version=data.version;role=data.role;selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
+    if(force||data.version!==version||role!==data.role){state=upgradeNumbering(data.state);version=data.version;role=data.role;selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
     else if(!editing){renderWait();renderSelection();}
     sync(true,demo?'Preview · local changes':'Saved · sharing live');
   }catch(e){sync(false,'Offline · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(force)toast(e.message,true);}
@@ -43,7 +43,7 @@ async function refresh(force=false){
 async function act(action){
   if(busy)return false;busy=true;$('location').disabled=true;sync(false,'Saving…');
   try{const data=demo?{state:demoModel.applyAction(state,action,role),version:version+1}:await api(endpoint('actions'),{method:'POST',body:JSON.stringify({version,action})});
-    state=data.state;version=data.version;if(demo)localStorage.setItem('seating-preview',JSON.stringify(state));
+    state=upgradeNumbering(data.state);version=data.version;if(demo)localStorage.setItem('seating-preview',JSON.stringify(state));
     if(action.type==='seat'||action.type==='cancelParty')partyId=null;
     selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));render();sync(true,demo?'Preview · local changes':'Saved · sharing live');return true;
   }catch(e){toast(e.message,true);sync(false,'Change not saved');if(e.status===409){busy=false;await refresh(true);}if(e.status===401){$('app').hidden=true;$('login').hidden=false;}return false;}finally{busy=false;$('location').disabled=false;}
@@ -98,6 +98,8 @@ function renderFloor(){
   const groups=[...new Set(state.tables.map(t=>t.group).filter(Boolean))];for(const id of groups){const ts=state.tables.filter(t=>t.group===id);for(let i=1;i<ts.length;i++)floor.append(svg('line',{x1:ts[i-1].x,y1:ts[i-1].y,x2:ts[i].x,y2:ts[i].y,class:'group-line'}));}
   for(const t of state.tables)floor.append(tableSymbol(t));
   for(const s of Object.keys(names))$('count-'+s).textContent=state.tables.filter(t=>t.status===s).length;
+  const seats=openSeats(state.tables);$('count-seats').textContent=seats.count;
+  $('seat-count-note').textContent=seats.unconfirmed?`${seats.unconfirmed} open booths/tables need a capacity; excluded from seat count.`:'';
   $('selection-hint').textContent=selected.size?`${selected.size} table${selected.size===1?'':'s'} selected`:'Tap a table to select it';
   $('plan-note').textContent=state.background?`Uploaded plan: ${state.background.name}. Use Layout editor to align tables with the plan.`:'Chair counts follow your PDF. Booth capacities remain unconfirmed until set in Layout editor.';
 }
@@ -189,7 +191,7 @@ $('upload').onchange=async()=>{
     }
     if(!blob||!['image/png','image/jpeg','image/webp'].includes(blob.type))throw new Error('Choose a PDF, PNG, JPEG, or WebP file.');
     if(demo){const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(blob);});state.background={name:file.name,dataUrl};localStorage.setItem('seating-preview',JSON.stringify(state));}
-    else{const r=await fetch(endpoint('floorplan')+`?version=${version}&name=${encodeURIComponent(file.name)}`,{method:'POST',headers:{'content-type':blob.type},body:blob}),data=await r.json();if(!r.ok)throw new Error(data.error);state=data.state;version=data.version;}
+    else{const r=await fetch(endpoint('floorplan')+`?version=${version}&name=${encodeURIComponent(file.name)}`,{method:'POST',headers:{'content-type':blob.type},body:blob}),data=await r.json();if(!r.ok)throw new Error(data.error);state=upgradeNumbering(data.state);version=data.version;}
     setView('All');render();toast('Floor plan uploaded. Position and save tables in Layout editor.');sync(true,demo?'Preview · local changes':'Saved · sharing live');
   }catch(e){toast(e.message,true);sync(false,'Upload not saved');}finally{uploadBusy=false;$('location').disabled=false;$('upload').value='';}
 };

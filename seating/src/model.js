@@ -3,7 +3,7 @@ export class AppError extends Error { constructor(message, status=400) { super(m
 const fail = message => { throw new AppError(message); };
 const integer = (v,min,max) => Number.isInteger(v) && v>=min && v<=max;
 const clean = (v,max) => String(v ?? '').trim().slice(0,max);
-export function initialState() { return { tables:initialTables(), parties:[], background:null, history:[] }; }
+export function initialState() { return { tables:initialTables(), numberingVersion:1, parties:[], background:null, history:[] }; }
 export function selectedTables(state, ids) {
   if (!Array.isArray(ids) || !ids.length || ids.length>12 || new Set(ids).size!==ids.length) fail('Select between 1 and 12 different tables.');
   const tables=ids.map(id=>state.tables.find(t=>t.id===id));
