@@ -6,7 +6,7 @@ let currentCampaigns = [];
 let allCampaigns = [];
 let allLocations = [];
 let currentProfile = null;
-let invitationsConfigured = false;
+let userManagementConfigured = false;
 async function call(path, options = {}) {
   const token = sessionStorage.getItem(tokenKey); const headers = { ...(options.headers || {}) };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -22,6 +22,10 @@ async function upload(path, file) {
   return data;
 }
 function signedOut() { sessionStorage.removeItem(tokenKey); currentLocation = null; $('login-card').classList.remove('hidden'); $('password-card').classList.add('hidden'); $('app-card').classList.add('hidden'); }
+function showPasswordChange(title = 'Change your temporary password') {
+  $('password-title').textContent = title; $('password-message').textContent = '';
+  $('login-card').classList.add('hidden'); $('app-card').classList.add('hidden'); $('password-card').classList.remove('hidden');
+}
 function sourceLabel(value) { if (value.startsWith('campaign:')) { const name=currentCampaigns.find((item) => `campaign:${item.id}` === value)?.name; return name ? `Marketing Campaign — ${name}` : 'Marketing Campaign'; } if (value.startsWith('custom:')) return currentPages.custom_pages.find((page) => `custom:${page.id}` === value)?.name || 'Custom page'; return ({ menu:'Menu', ads:'Ads', funzone:'Funzone Ads', media:'Marketing Campaign' })[value] || value; }
 function isOnline(value) {
   if (!value) return false;
@@ -103,8 +107,10 @@ async function openEnrollmentFromUrl() {
 }
 async function loadApp() {
   try {
-    const [{ profile, userInvitesConfigured }, { locations }] = await Promise.all([call('/api/session'), call('/api/locations')]);
-    currentProfile = profile; allLocations = locations; invitationsConfigured = userInvitesConfigured;
+    const session = await call('/api/session');
+    if (session.password_change_required) { currentProfile = session.profile; showPasswordChange(); return; }
+    const { locations } = await call('/api/locations'); const { profile } = session;
+    currentProfile = profile; allLocations = locations; userManagementConfigured = session.userManagementConfigured;
     $('identity').textContent = profile.display_name || profile.email;
     $('location-select').replaceChildren(...locations.map((location) => new Option(location.name, location.id)));
     $('login-card').classList.add('hidden'); $('password-card').classList.add('hidden'); $('app-card').classList.remove('hidden');
@@ -134,33 +140,37 @@ function renderUserLocations(assignments = []) {
 }
 function userAssignments() { return [...document.querySelectorAll('.assignment')].filter((box) => box.querySelector('.assignment-enabled').checked).map((box) => ({ location_id:box.dataset.locationId, role:box.querySelector('.assignment-role').value, permissions:[...box.querySelectorAll('.permission-grid input:checked')].map((input) => input.value) })); }
 async function loadUsers() {
-  const data = await call('/api/admin/users'); invitationsConfigured = data.invitationsConfigured;
-  $('invite-warning').classList.toggle('hidden',invitationsConfigured);
+  const data = await call('/api/admin/users'); userManagementConfigured = data.userManagementConfigured;
+  $('invite-warning').classList.toggle('hidden',userManagementConfigured);
   $('users').replaceChildren(...data.users.map((user) => {
     const row = document.createElement('div'); row.className = 'user-row'; const info = document.createElement('div');
     const name = document.createElement('strong'); name.textContent = user.display_name;
     const detail = document.createElement('span'); detail.textContent = `${user.email} · ${user.system_admin ? 'system administrator' : `${user.assignments.length} location${user.assignments.length === 1 ? '' : 's'}`} · ${user.active ? 'enabled' : 'disabled'}`;
-    const activity = document.createElement('span'); activity.textContent = `${user.activated ? 'Account activated' : 'Invitation pending'} · Last login: ${accountTime(user.last_login_at)}`;
+    const activity = document.createElement('span'); activity.textContent = `${user.activated ? 'Account activated' : 'Account setup pending'} · Last login: ${accountTime(user.last_login_at)}`;
     info.append(name,detail,activity);
     const actions=document.createElement('div'); actions.className='user-actions';
-    if (!user.activated) { const resend=document.createElement('button'); resend.className='quiet small'; resend.textContent='Resend invite'; resend.onclick=async()=>{ resend.disabled=true; resend.textContent='Sending…'; try{ await call(`/api/admin/users/${encodeURIComponent(user.id)}/resend-invite`,{method:'POST'}); resend.textContent='Invite sent'; setTimeout(()=>{resend.textContent='Resend invite';resend.disabled=false;},2500); }catch(error){alert(error.message);resend.textContent='Resend invite';resend.disabled=false;} }; actions.append(resend); }
-    if (user.activated) { const reset=document.createElement('button'); reset.className='quiet small'; reset.textContent='Send password reset'; reset.onclick=async()=>{ if(!confirm(`Send a password reset email to ${user.email}?`))return; reset.disabled=true; reset.textContent='Sending…'; try{ await call(`/api/admin/users/${encodeURIComponent(user.id)}/reset-password`,{method:'POST'}); reset.textContent='Reset sent'; alert(`Password reset email sent to ${user.email}.`); setTimeout(()=>{reset.textContent='Send password reset';reset.disabled=false;},2500); }catch(error){alert(error.message);reset.textContent='Send password reset';reset.disabled=false;} }; actions.append(reset); }
+    if (user.active) { const password=document.createElement('button'); password.className='quiet small'; password.textContent='Set password'; password.onclick=()=>openUserPassword(user); actions.append(password); }
     const edit = document.createElement('button'); edit.className = 'quiet small'; edit.textContent = 'Edit'; edit.onclick = () => openUser(user); actions.append(edit); row.append(info,actions); return row;
   }));
 }
 function openUser(user = null) {
   $('user-form').reset(); $('user-id').value = user?.id || ''; $('user-title').textContent = user ? 'Edit user' : 'Add user'; $('user-email').value = user?.email || ''; $('user-email').disabled = Boolean(user); $('user-name').value = user?.display_name || ''; $('user-admin').checked = Boolean(user?.system_admin); $('user-active').checked = user ? Boolean(user.active) : true; $('user-message').textContent = '';
+  $('new-user-passwords').classList.toggle('hidden',Boolean(user)); $('user-new-password').required = !user; $('user-new-confirm').required = !user;
   renderUserLocations(user?.assignments || []); $('user-locations').classList.toggle('disabled',$('user-admin').checked); $('user-dialog').showModal();
 }
-$('login').addEventListener('submit', async (event) => { event.preventDefault(); $('message').textContent = 'Signing in…'; try { const result = await call('/api/auth/login', { method:'POST', body:JSON.stringify({ email:$('email').value, password:$('password').value }) }); sessionStorage.setItem(tokenKey, result.access_token); $('password').value = ''; $('message').textContent = ''; await loadApp(); } catch (error) { $('message').textContent = error.message; } });
+function openUserPassword(user) {
+  $('user-password-form').reset(); $('user-password-id').value=user.id; $('user-password-account').textContent=`Set a temporary password for ${user.display_name} (${user.email}).`; $('user-password-message').textContent=''; $('user-password-dialog').showModal();
+}
+$('login').addEventListener('submit', async (event) => { event.preventDefault(); $('message').textContent = 'Signing in…'; try { const result = await call('/api/auth/login', { method:'POST', body:JSON.stringify({ email:$('email').value, password:$('password').value }) }); sessionStorage.setItem(tokenKey, result.access_token); $('password').value = ''; $('message').textContent = ''; if(result.password_change_required)showPasswordChange();else await loadApp(); } catch (error) { $('message').textContent = error.message; } });
 $('logout').addEventListener('click', signedOut);
 $('location-select').addEventListener('change', () => loadLocation($('location-select').value).catch((error) => alert(error.message)));
 document.querySelectorAll('.tabs button').forEach((button) => button.onclick = () => { document.querySelectorAll('.tabs button').forEach((item) => item.classList.toggle('active', item === button)); document.querySelectorAll('.panel').forEach((panel) => panel.classList.toggle('hidden', panel.id !== button.dataset.panel)); if(button.dataset.panel==='marketing-panel')loadMarketing().catch((error)=>alert(error.message)); });
 $('add-location').addEventListener('click', () => { $('location-form').reset(); $('location-message').textContent = ''; $('location-dialog').showModal(); });
 $('location-form').addEventListener('submit', async (event) => { event.preventDefault(); $('location-message').textContent = 'Creating…'; try { const location = await call('/api/locations',{ method:'POST',body:JSON.stringify({ name:$('location-name').value }) }); $('location-dialog').close(); currentLocation = location.id; await loadApp(); } catch (error) { $('location-message').textContent = error.message; } });
-$('add-user').addEventListener('click', () => { if (!invitationsConfigured) { $('invite-warning').classList.remove('hidden'); return; } openUser(); });
+$('add-user').addEventListener('click', () => { if (!userManagementConfigured) { $('invite-warning').classList.remove('hidden'); return; } openUser(); });
 $('user-admin').addEventListener('change', () => { $('user-locations').classList.toggle('disabled',$('user-admin').checked); });
-$('user-form').addEventListener('submit', async (event) => { event.preventDefault(); $('user-message').textContent = 'Saving…'; const id = $('user-id').value; const admin = $('user-admin').checked; const body = { email:$('user-email').value, display_name:$('user-name').value, system_admin:admin, active:$('user-active').checked, assignments:admin ? [] : userAssignments() }; try { await call(id ? `/api/admin/users/${encodeURIComponent(id)}` : '/api/admin/users',{ method:id ? 'PATCH' : 'POST',body:JSON.stringify(body) }); $('user-dialog').close(); await loadUsers(); } catch (error) { $('user-message').textContent = error.message; } });
+$('user-form').addEventListener('submit', async (event) => { event.preventDefault(); $('user-message').textContent = 'Saving…'; const id = $('user-id').value; const admin = $('user-admin').checked; const body = { email:$('user-email').value, display_name:$('user-name').value, system_admin:admin, active:$('user-active').checked, assignments:admin ? [] : userAssignments() }; if(!id){ if($('user-new-password').value!==$('user-new-confirm').value){$('user-message').textContent='The temporary passwords do not match.';return;} body.password=$('user-new-password').value; } try { await call(id ? `/api/admin/users/${encodeURIComponent(id)}` : '/api/admin/users',{ method:id ? 'PATCH' : 'POST',body:JSON.stringify(body) }); $('user-dialog').close(); await loadUsers(); } catch (error) { $('user-message').textContent = error.message; } });
+$('user-password-form').addEventListener('submit',async(event)=>{ event.preventDefault(); const password=$('user-temp-password').value; const userId=$('user-password-id').value; $('user-password-message').textContent='Setting password…'; if(password!==$('user-temp-confirm').value){$('user-password-message').textContent='The temporary passwords do not match.';return;} try{await call(`/api/admin/users/${encodeURIComponent(userId)}/set-password`,{method:'POST',body:JSON.stringify({password})}); $('user-password-dialog').close(); if(userId===currentProfile?.id){signedOut();alert('Your temporary password is set. Sign in with it now and choose your private password.');return;} await loadUsers(); alert('Temporary password set. Give it to the user securely; it will not be shown again.');}catch(error){$('user-password-message').textContent=error.message;} });
 document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click',() => $(button.dataset.close).close()));
 $('add-page').addEventListener('click', () => { currentPages.custom_pages.push({ id:crypto.randomUUID(), name:'', url:'https://' }); renderCustomPages(); $('custom-pages').lastElementChild?.querySelector('input')?.focus(); });
 $('pages-form').addEventListener('submit', async (event) => { event.preventDefault(); $('pages-message').textContent = 'Saving…'; try { await call(`/api/locations/${encodeURIComponent(currentLocation)}/pages`, { method:'PUT', body:JSON.stringify({ menu_url:$('menu-url').value, ads_url:$('ads-url').value, funzone_url:$('funzone-url').value, custom_pages:currentPages.custom_pages }) }); $('pages-message').textContent = 'Page settings saved.'; await loadLocation(currentLocation); } catch (error) { $('pages-message').textContent = error.message; } });

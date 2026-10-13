@@ -76,24 +76,30 @@ async function replaceAssignments(userId, assignments, env) {
   await env.DB.batch(statements);
 }
 
-async function inviteUser(request, session, env) {
+async function createUser(request, session, env) {
   if (!systemAdmin(session)) return json({ error:'System administrator access required.' },403);
-  if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error:'User invitations are not configured yet.' },503);
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error:'User management is not configured yet.' },503);
   let body; try { body = await request.json(); } catch { return json({ error:'Invalid request.' },400); }
   const email = String(body.email || '').trim().toLowerCase(); const displayName = String(body.display_name || '').trim();
+  const password = String(body.password || '');
   const assignments = cleanAssignments(body.assignments);
   if (!email.includes('@') || displayName.length < 2 || displayName.length > 80) return json({ error:'Enter a valid email and display name.' },400);
+  if (password.length < 12 || password.length > 128) return json({ error:'Use a temporary password between 12 and 128 characters.' },400);
   if (!body.system_admin && !assignments.length) return json({ error:'Assign at least one location.' },400);
-  const response = await fetch(`${env.SUPABASE_URL.replace(/\/$/,'')}/auth/v1/invite?redirect_to=${encodeURIComponent(new URL(request.url).origin + '/accept-invite')}`, {
+  const response = await fetch(`${env.SUPABASE_URL.replace(/\/$/,'')}/auth/v1/admin/users`, {
     method:'POST', headers:{ 'content-type':'application/json', apikey:env.SUPABASE_SERVICE_ROLE_KEY,
-      authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` }, body:JSON.stringify({ email, data:{ display_name:displayName } }),
+      authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` }, body:JSON.stringify({
+        email, password, email_confirm:true, user_metadata:{ display_name:displayName },
+        app_metadata:{ must_change_password:true },
+      }),
   });
-  const invited = await response.json();
-  if (!response.ok) return json({ error:invited.msg || invited.message || 'Could not send the invitation.' },400);
+  const created = await response.json();
+  if (!response.ok) return json({ error:created.msg || created.message || 'Could not create the user account.' },400);
+  const createdUser = created.user || created;
   await env.DB.prepare(`INSERT INTO user_profiles(id,auth_user_id,email,display_name,system_admin,active)
-    VALUES(?,?,?,?,?,1)`).bind(invited.id,invited.id,email,displayName,body.system_admin ? 1 : 0).run();
-  await replaceAssignments(invited.id,assignments,env);
-  return json({ ok:true, id:invited.id },201);
+    VALUES(?,?,?,?,?,1)`).bind(createdUser.id,createdUser.id,email,displayName,body.system_admin ? 1 : 0).run();
+  await replaceAssignments(createdUser.id,assignments,env);
+  return json({ ok:true, id:createdUser.id },201);
 }
 
 function campaignIdFor(sourceType, sourceValue) {
@@ -365,7 +371,8 @@ async function login(request, env) {
   const profile = await profileFor(result.user, env);
   if (!profile) return json({ error: 'This account has not been activated for Pizza Ranch.' }, 403);
   return json({ access_token: result.access_token, refresh_token: result.refresh_token,
-    expires_in: result.expires_in, profile });
+    expires_in: result.expires_in, profile,
+    password_change_required:Boolean(result.user?.app_metadata?.must_change_password) });
 }
 
 async function updatePassword(request, env) {
@@ -385,6 +392,15 @@ async function updatePassword(request, env) {
   });
   if (!response.ok) return json({ error: 'This invitation or reset link has expired. Request a new link.' }, 401);
   const user = await response.json();
+  if (user.app_metadata?.must_change_password) {
+    if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error:'The password changed, but account activation could not finish. Contact an administrator.' },503);
+    const metadataResponse = await fetch(`${env.SUPABASE_URL.replace(/\/$/,'')}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, {
+      method:'PUT', headers:{ 'content-type':'application/json', apikey:env.SUPABASE_SERVICE_ROLE_KEY,
+        authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` },
+      body:JSON.stringify({ app_metadata:{ ...(user.app_metadata || {}), must_change_password:false } }),
+    });
+    if (!metadataResponse.ok) return json({ error:'The password changed, but account activation could not finish. Sign in with the new password and try again.' },502);
+  }
   const profile = await profileFor(user, env);
   if (!profile) return json({ error: 'This account has not been activated for Pizza Ranch.' }, 403);
   return json({ profile });
@@ -401,7 +417,10 @@ async function api(request, env, url) {
   if (url.pathname.startsWith('/api/device/')) return deviceApi(request, env, url);
   const session = await requireUser(request, env);
   if (!session) return json({ error: 'Authentication required.' }, 401);
-  if (url.pathname === '/api/session') return json({ profile: session.profile, userInvitesConfigured:Boolean(env.SUPABASE_SERVICE_ROLE_KEY) });
+  const passwordChangeRequired = Boolean(session.user?.app_metadata?.must_change_password);
+  if (url.pathname === '/api/session') return json({ profile: session.profile,
+    userManagementConfigured:Boolean(env.SUPABASE_SERVICE_ROLE_KEY), password_change_required:passwordChangeRequired });
+  if (passwordChangeRequired) return json({ error:'Change your temporary password before continuing.', password_change_required:true },403);
   if (url.pathname === '/api/enroll/lookup' && request.method === 'GET') {
     await ensureEnrollmentSchema(env); const code=String(url.searchParams.get('code') || '').replace(/\D/g,'');
     if (code.length !== 6) return json({ error:'Enter the six-digit code shown on the TV.' },400);
@@ -470,50 +489,32 @@ async function api(request, env, url) {
     for (const user of users) Object.assign(user, authStatuses.get(user.id) || {
       activated:false, activated_at:null, last_login_at:null,
     });
-    return json({ users, invitationsConfigured:Boolean(env.SUPABASE_SERVICE_ROLE_KEY) });
+    return json({ users, userManagementConfigured:Boolean(env.SUPABASE_SERVICE_ROLE_KEY) });
   }
-  if (url.pathname === '/api/admin/users' && request.method === 'POST') return inviteUser(request,session,env);
-  const resendInviteMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/resend-invite$/);
-  if (resendInviteMatch && request.method === 'POST') {
+  if (url.pathname === '/api/admin/users' && request.method === 'POST') return createUser(request,session,env);
+  const setPasswordMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/set-password$/);
+  if (setPasswordMatch && request.method === 'POST') {
     if (!systemAdmin(session)) return json({ error:'System administrator access required.' },403);
-    if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error:'User invitations are not configured yet.' },503);
-    const userId = decodeURIComponent(resendInviteMatch[1]);
-    const profile = await env.DB.prepare('SELECT email,display_name,active FROM user_profiles WHERE id=?').bind(userId).first();
-    if (!profile) return json({ error:'User account not found.' },404);
-    if (!profile.active) return json({ error:'Enable this account before resending its invitation.' },400);
-    const authResponse = await fetch(`${env.SUPABASE_URL.replace(/\/$/,'')}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
-      headers:{ apikey:env.SUPABASE_SERVICE_ROLE_KEY, authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` },
-    });
-    if (!authResponse.ok) return json({ error:'The Supabase user account could not be found.' },404);
-    const authUser = await authResponse.json();
-    if (authUser.email_confirmed_at || authUser.confirmed_at) return json({ error:'This account is already activated.' },409);
-    const response = await fetch(`${env.SUPABASE_URL.replace(/\/$/,'')}/auth/v1/invite?redirect_to=${encodeURIComponent(new URL(request.url).origin + '/accept-invite')}`, {
-      method:'POST', headers:{ 'content-type':'application/json', apikey:env.SUPABASE_SERVICE_ROLE_KEY,
-        authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` },
-      body:JSON.stringify({ email:profile.email, data:{ display_name:profile.display_name } }),
-    });
-    if (!response.ok) return json({ error:response.status === 429 ? 'Please wait before sending another invitation.' : 'Supabase could not resend the invitation.' },response.status === 429 ? 429 : 502);
-    return json({ ok:true });
-  }
-  const passwordResetMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/reset-password$/);
-  if (passwordResetMatch && request.method === 'POST') {
-    if (!systemAdmin(session)) return json({ error:'System administrator access required.' },403);
-    if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error:'Password recovery is not configured yet.' },503);
-    const userId = decodeURIComponent(passwordResetMatch[1]);
+    if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error:'User management is not configured yet.' },503);
+    let body; try { body = await request.json(); } catch { return json({ error:'Invalid request.' },400); }
+    const password = String(body.password || '');
+    if (password.length < 12 || password.length > 128) return json({ error:'Use a temporary password between 12 and 128 characters.' },400);
+    const userId = decodeURIComponent(setPasswordMatch[1]);
     const profile = await env.DB.prepare('SELECT email,active FROM user_profiles WHERE id=?').bind(userId).first();
     if (!profile) return json({ error:'User account not found.' },404);
-    if (!profile.active) return json({ error:'Enable this account before sending a password reset.' },400);
+    if (!profile.active) return json({ error:'Enable this account before setting its password.' },400);
     const authResponse = await fetch(`${env.SUPABASE_URL.replace(/\/$/,'')}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
       headers:{ apikey:env.SUPABASE_SERVICE_ROLE_KEY, authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` },
     });
     if (!authResponse.ok) return json({ error:'The Supabase user account could not be found.' },404);
-    const authUser = await authResponse.json();
-    if (!authUser.email_confirmed_at && !authUser.confirmed_at) return json({ error:'This account has not been activated. Resend its invitation instead.' },409);
-    const response = await fetch(`${env.SUPABASE_URL.replace(/\/$/,'')}/auth/v1/recover?redirect_to=${encodeURIComponent(new URL(request.url).origin + '/accept-invite')}`, {
-      method:'POST', headers:{ 'content-type':'application/json', apikey:env.SUPABASE_PUBLISHABLE_KEY },
-      body:JSON.stringify({ email:profile.email }),
+    const authResult = await authResponse.json(); const authUser = authResult.user || authResult;
+    const response = await fetch(`${env.SUPABASE_URL.replace(/\/$/,'')}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+      method:'PUT', headers:{ 'content-type':'application/json', apikey:env.SUPABASE_SERVICE_ROLE_KEY,
+        authorization:`Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` },
+      body:JSON.stringify({ password, email_confirm:true,
+        app_metadata:{ ...(authUser.app_metadata || {}), must_change_password:true } }),
     });
-    if (!response.ok) return json({ error:response.status === 429 ? 'Please wait before sending another password reset.' : 'Supabase could not send the password reset email.' },response.status === 429 ? 429 : 502);
+    if (!response.ok) return json({ error:'Supabase could not set the temporary password.' },502);
     return json({ ok:true });
   }
   const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
