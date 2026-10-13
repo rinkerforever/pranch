@@ -1,3 +1,4 @@
+import { suggestTables } from './suggestions.js';
 import { AREAS, WALL_PATH, ROOM_LABELS, DOORS, upgradeNumbering, openSeats } from './floor.js';
 const $=id=>document.getElementById(id), NS='http://www.w3.org/2000/svg';
 const demo=new URLSearchParams(location.search).get('demo')==='1';
@@ -22,7 +23,7 @@ async function loadSession(){
   $('login').hidden=true;$('app').hidden=false;$('demo-banner').hidden=!demo;
   $('staff-open').hidden=!profile.system_admin;$('location').replaceChildren(...locations.map(l=>new Option(l.name,l.id)));
   $('no-access').hidden=locations.length>0;$('workspace').hidden=!locations.length;
-  if(locations.length){locationId=locations[0].id;role=locations[0].role;await refresh(true);}
+  if(locations.length){if(matchMedia('(max-width:599px)').matches)setView('C');locationId=locations[0].id;role=locations[0].role;await refresh(true);}
 }
 function demoInitial(){let s=demoModel.initialState();
   s.parties=[{id:'johnson',name:'Johnson',size:6,notes:'Prefers main dining room',arrivedAt:Date.now()-18*60000,status:'waiting'},{id:'miller',name:'Miller',size:2,notes:'',arrivedAt:Date.now()-12*60000,status:'waiting'},{id:'davis',name:'Davis',size:4,notes:'One high chair',arrivedAt:Date.now()-8*60000,status:'waiting'}];
@@ -54,8 +55,9 @@ function canEdit(){return ['admin','manager'].includes(role);}
 function label(t){return `${t.area}-${t.number}`;}
 function minutes(stamp){return Math.max(0,Math.floor((Date.now()-stamp)/60000));}
 function groupTables(t){return t.group?state.tables.filter(o=>o.group===t.group):[t];}
-function showSidebar(panel){$('workspace').dataset.panel=panel;$('workspace').classList.add('sidebar-open');$('tablet-wait').setAttribute('aria-expanded',panel==='waiting');$('tablet-details').setAttribute('aria-expanded',panel==='details');}
-function closeSidebar(){$('workspace').classList.remove('sidebar-open');for(const id of ['tablet-wait','tablet-details'])$(id).setAttribute('aria-expanded','false');}
+function updatePhoneNav(waiting){$('phone-floor').setAttribute('aria-pressed',!waiting);$('phone-wait').setAttribute('aria-pressed',waiting);}
+function showSidebar(panel){updatePhoneNav(panel==='waiting');$('workspace').dataset.panel=panel;$('workspace').classList.add('sidebar-open');$('tablet-wait').setAttribute('aria-expanded',panel==='waiting');$('tablet-details').setAttribute('aria-expanded',panel==='details');}
+function closeSidebar(){updatePhoneNav(false);$('workspace').classList.remove('sidebar-open');for(const id of ['tablet-wait','tablet-details'])$(id).setAttribute('aria-expanded','false');}
 function chooseTable(t){
   showSidebar('details');
   if(editing){selected=new Set([t.id]);tableDraft=structuredClone(t);renderFloor();renderEditor();return;}
@@ -102,20 +104,20 @@ function renderFloor(){
   const groups=[...new Set(state.tables.map(t=>t.group).filter(Boolean))];for(const id of groups){const ts=state.tables.filter(t=>t.group===id);for(let i=1;i<ts.length;i++)floor.append(svg('line',{x1:ts[i-1].x,y1:ts[i-1].y,x2:ts[i].x,y2:ts[i].y,class:'group-line'}));}
   for(const t of state.tables)floor.append(tableSymbol(t));
   for(const s of Object.keys(names))$('count-'+s).textContent=state.tables.filter(t=>t.status===s).length;
-  const seats=openSeats(state.tables);$('count-seats').textContent=seats.count;
+  const seats=openSeats(state.tables);$('count-seats').textContent=seats.count;$('phone-seat-count').textContent=seats.count;$('phone-seat-note').textContent=seats.unconfirmed?'Confirmed capacity only':'Restaurant total';
   $('seat-count-note').textContent=seats.unconfirmed?`${seats.unconfirmed} open booths/tables need a capacity; excluded from seat count.`:'';
   $('selection-hint').textContent=selected.size?`${selected.size} table${selected.size===1?'':'s'} selected`:'Tap a table to select it';
   $('plan-note').textContent=state.background?`Uploaded plan: ${state.background.name}. Use Layout editor to align tables with the plan.`:'Chair counts follow your PDF. Booth capacities remain unconfirmed until set in Layout editor.';
 }
 function renderWait(){
-  const waiting=state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt);$('wait-count').textContent=waiting.length;$('tablet-wait-count').textContent=waiting.length;$('add-guest').disabled=!canWrite();
+  const waiting=state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt);$('wait-count').textContent=waiting.length;$('tablet-wait-count').textContent=waiting.length;$('phone-wait-count').textContent=waiting.length;$('add-guest').disabled=!canWrite();
   if(!waiting.length){$('wait-list').replaceChildren(el('div',{class:'empty'},'Everyone is seated. Add a party when guests arrive.'));return;}
   $('wait-list').replaceChildren(...waiting.map((p,index)=>{
     const row=el('div',{class:`guest${p.id===partyId?' active':''}`,tabindex:0,role:'button','aria-label':`${p.name}, ${p.size} guests, waiting ${minutes(p.arrivedAt)} minutes`});
     const main=el('div',{class:'guest-main'});main.append(el('strong',{},p.name),el('small',{},`#${index+1}`));
     const meta=el('div',{class:'guest-meta'});meta.append(el('span',{},`${p.size} guests`),el('span',{},`${minutes(p.arrivedAt)} min wait`));row.append(main,meta);
     if(p.notes)row.append(el('p',{class:'guest-note'},p.notes));
-    const choose=()=>{partyId=p.id;selected.clear();renderWait();renderSelection();renderRecommendations();renderFloor();};row.onclick=choose;row.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();choose();}};
+    const choose=()=>{partyId=p.id;selected.clear();renderWait();renderSelection();renderRecommendations();renderFloor();$('recommend-panel').scrollIntoView({block:'nearest',behavior:'smooth'});};const fit=suggestTables(state.tables,p.size,1)[0];const fitButton=el('button',{class:'guest-fit',type:'button'},fit?`Suggested: ${fit.map(label).join(' + ')} · View options`:'Find tables');fitButton.onclick=e=>{e.stopPropagation();choose();};row.append(fitButton);row.onclick=choose;row.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();choose();}};
     if(partyId===p.id&&canWrite()){
       const actions=el('div',{class:'guest-actions'}),edit=el('button',{class:'quiet small'},'Edit'),cancel=el('button',{class:'quiet small danger'},'Remove');
       edit.onclick=e=>{e.stopPropagation();openGuest(p);};cancel.onclick=async e=>{e.stopPropagation();if(await confirmChange('Remove waiting party?',`Remove ${p.name} from the waiting list?`))await act({type:'cancelParty',id:p.id});};actions.append(edit,cancel);row.append(actions);
@@ -138,22 +140,14 @@ function renderSelection(){
   if(tables.length>1&&tables.every(t=>t.status==='open')){const b=el('button',{class:'small'},'Combine tables');b.onclick=()=>act({type:'combine',ids:[...selected]});grouping.append(b);}
   if(tables.some(t=>t.group)){const b=el('button',{class:'small'},'Separate tables');b.disabled=tables.some(t=>t.status==='in_use');b.onclick=()=>act({type:'split',ids:[...selected]});grouping.append(b);}box.append(grouping);
 }
-function candidateGroups(){
-  const open=state.tables.filter(t=>t.status==='open'&&t.capacity),results=[],seen=new Set();
-  const add=ts=>{const ids=ts.map(t=>t.id).sort(),key=ids.join('|');if(seen.has(key)||ts.some(t=>t.group&&state.tables.some(o=>o.group===t.group&&!ids.includes(o.id))))return;seen.add(key);results.push(ts);};
-  for(const t of open){const initial=groupTables(t);if(initial.every(t=>t.status==='open'&&t.capacity))add(initial);}
-  // Up to four approved tables per suggestion. Manual selection supports larger groups.
-  for(let i=0;i<results.length&&i<2000;i++){const ts=results[i];if(ts.length>=4)continue;for(const t of open){if(ts.includes(t)||t.area!==ts[0].area)continue;if(ts.some(o=>o.allowed.includes(t.id)&&t.allowed.includes(o.id)))add([...ts,t]);}}
-  return results;
-}
 function renderRecommendations(){
-  const party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');$('recommend-panel').hidden=!party||editing;if(!party)return;
-  const candidates=candidateGroups().filter(ts=>ts.reduce((n,t)=>n+t.capacity,0)>=party.size).sort((a,b)=>a.reduce((n,t)=>n+t.capacity,0)-b.reduce((n,t)=>n+t.capacity,0)||a.length-b.length).slice(0,5);
+  const party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');$('recommend-panel').hidden=editing;$('recommend-context').textContent=party?`${party.name} · ${party.size} guests — best fits first`:'Select a waiting party to find an open table that fits.';if(!party){$('recommendations').replaceChildren();return;}
+  const candidates=suggestTables(state.tables,party.size);
   $('recommendations').replaceChildren(...candidates.map(ts=>{const b=el('button',{class:'suggestion'}),info=el('span');info.append(el('strong',{},ts.map(label).join(' + ')),el('small',{},`${ts.reduce((n,t)=>n+t.capacity,0)} seats · ${ts.length>1?'Approved combination':'Open table'}`));b.append(info,el('span',{},'→'));b.onclick=()=>{selected=new Set(ts.map(t=>t.id));setView(ts[0].area);renderFloor();renderSelection();showSidebar('details');};return b;}));
   if(!candidates.length)$('recommendations').append(el('p',{class:'empty'},'No available fit. A manager can confirm booth capacities or approve table combinations in Layout editor.'));
 }
 function setView(value){closeSidebar();view=value;const boxes={All:[0,-20,1660,950],Dining:[140,550,1495,360],A:[1300,540,340,350],B:[680,610,665,285],C:[155,610,540,285],'Party rooms':[1000,-10,640,220],'Rose City':[1010,-10,190,200],'Azalea Trail':[1190,-10,210,200],'Piney Woods':[1390,-10,250,230]};viewBox=boxes[value]||boxes.All;renderAreas();if(state)renderFloor();}
-function renderAreas(){const labels={All:'Full plan',Dining:'Dining room',A:'A',B:'B',C:'C','Party rooms':'Party rooms'};$('areas').replaceChildren(...Object.entries(labels).map(([key,name])=>{const b=el('button',{class:view===key?'active':''},name);b.onclick=()=>setView(key);return b;}));}
+function renderAreas(){const labels={All:'Full plan',Dining:'Dining room',A:'A',B:'B',C:'C','Party rooms':'Party rooms'};$('areas').replaceChildren(...Object.entries(labels).map(([key,name])=>{const b=el('button',{class:view===key?'active':'','data-view':key},name);b.onclick=()=>setView(key);return b;}));}
 function renderEditor(){
   $('layout-panel').hidden=!editing||!tableDraft;if(!editing||!tableDraft)return;
   const t=tableDraft;$('layout-title').textContent=t.id?'Edit '+label(t):'Add table';$('table-area').replaceChildren(...AREAS.map(a=>new Option(a,a)));$('table-area').value=t.area;$('table-number').value=t.number;$('table-kind').value=t.kind;$('table-capacity').value=t.capacity??'';$('table-orientation').value=t.orientation;$('table-x').value=t.x;$('table-y').value=t.y;$('remove-table').hidden=!t.id;renderAllowed(t.allowed||[]);
@@ -162,6 +156,7 @@ function renderAllowed(allowed=[]){const area=$('table-area').value,kind=$('tabl
   for(const t of state.tables.filter(t=>t.area===area&&t.id!==tableDraft?.id&&t.kind==='table')){const l=el('label'),c=el('input',{type:'checkbox',value:t.id});c.checked=allowed.includes(t.id);l.append(c,document.createTextNode(`${label(t)} · ${t.capacity} seats`));$('allowed-tables').append(l);}
 }
 function render(){
+  $('phone-location').textContent=locations.find(l=>l.id===locationId)?.name||'';
   $('edit-tab').hidden=!canEdit();if(!canEdit())editing=false;$('tablet-wait').hidden=editing;
   $('live-tab').classList.toggle('active',!editing);$('edit-tab').classList.toggle('active',editing);$('editor-toolbar').hidden=!editing;$('wait-panel').hidden=editing;$('selection-panel').hidden=editing;$('layout-panel').hidden=!editing||!tableDraft;
   $('page-title').textContent=editing?'Make the floor yours.':'Let’s get everyone seated.';
@@ -172,7 +167,8 @@ function openGuest(p=null){editGuest=p?.id||null;$('guest-title').textContent=p?
 $('login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;$('login-error').textContent='';try{await api('/api/login',{method:'POST',body:JSON.stringify({email:$('email').value,password:$('password').value})});$('password').value='';await loadSession();}catch(error){$('login-error').textContent=error.message;}finally{b.disabled=false;}};
 $('logout').onclick=async()=>{if(!demo)await api('/api/logout',{method:'POST'});locationId=null;state=null;$('app').hidden=true;$('login').hidden=false;if(demo)location.href='/';};
 $('location').onchange=async()=>{locationId=$('location').value;role=locations.find(l=>l.id===locationId).role;selected.clear();partyId=null;tableDraft=null;editing=false;version=-1;await refresh(true);};
-$('live-tab').onclick=()=>{closeSidebar();editing=false;tableDraft=null;render();};$('edit-tab').onclick=()=>{closeSidebar();editing=true;partyId=null;tableDraft=null;selected.clear();render();toast('Select a table to edit its capacity, chairs, or allowed combinations.');};
+$('live-tab').onclick=()=>{$('app').classList.remove('phone-menu-open');closeSidebar();editing=false;tableDraft=null;render();};$('edit-tab').onclick=()=>{$('app').classList.remove('phone-menu-open');closeSidebar();editing=true;partyId=null;tableDraft=null;selected.clear();render();toast('Select a table to edit its capacity, chairs, or allowed combinations.');};
+$('phone-floor').onclick=closeSidebar;$('phone-wait').onclick=()=>{editing=false;render();showSidebar('waiting');};$('phone-more').onclick=()=>{const open=$('app').classList.toggle('phone-menu-open');$('phone-more').setAttribute('aria-expanded',open);};
 $('tablet-wait').onclick=()=>showSidebar('waiting');$('tablet-details').onclick=()=>showSidebar('details');$('sidebar-close').onclick=closeSidebar;
 $('add-guest').onclick=()=>openGuest();$('clear-selection').onclick=()=>{selected.clear();renderFloor();renderSelection();};
 $('guest-form').onsubmit=async e=>{e.preventDefault();e.submitter.disabled=true;const ok=await act({type:editGuest?'editParty':'addParty',id:editGuest,name:$('guest-name').value,size:Number($('guest-size').value),notes:$('guest-notes').value});e.submitter.disabled=false;if(ok){$('guest-dialog').close();toast(editGuest?'Party updated.':'Added to waiting list.');}};
