@@ -1,9 +1,14 @@
+import {presetCombinations,includesBoothCombination,childBoothFit} from '../public/combinations.js';
 import { initialTables, AREAS } from '../public/floor.js';
 export class AppError extends Error { constructor(message, status=400) { super(message); this.status=status; } }
 const fail = message => { throw new AppError(message); };
 const integer = (v,min,max) => Number.isInteger(v) && v>=min && v<=max;
+function equipment(action,existing={}){
+ for(const key of ['highChair','booster'])if(action[key]!==undefined&&typeof action[key]!=='boolean')fail('Choose high chair or booster with the checkboxes.');
+ return {highChair:action.highChair??existing.highChair??false,booster:action.booster??existing.booster??false};
+}
 const clean = (v,max) => String(v ?? '').trim().slice(0,max);
-export function initialState() { return { tables:initialTables(), numberingVersion:1, parties:[], background:null, history:[] }; }
+export function initialState() { return presetCombinations({ tables:initialTables(), numberingVersion:1, parties:[], background:null, history:[] }); }
 export function selectedTables(state, ids) {
   if (!Array.isArray(ids) || !ids.length || ids.length>12 || new Set(ids).size!==ids.length) fail('Select between 1 and 12 different tables.');
   const tables=ids.map(id=>state.tables.find(t=>t.id===id));
@@ -29,8 +34,10 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
   const state=structuredClone(original);
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
-  if(['layout','addTable','removeTable','background'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
-  if(type==='guestSettings') {
+  if(['layout','addTable','removeTable','background','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
+  if(type==='presetCombinations') {
+    presetCombinations(state,true);
+  } else if(type==='guestSettings') {
     if(typeof action.enabled!=='boolean'||!integer(action.maxPartySize,1,30))fail('Choose a maximum party size from 1 to 30.');
     state.guestSettings={enabled:action.enabled,maxPartySize:action.maxPartySize};
   } else if(type==='readyParty') {
@@ -41,13 +48,13 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
     const name=clean(action.name,80), size=Number(action.size), notes=clean(action.notes,300);
     if(!name || !integer(size,1,100)) fail('Enter a name and party size between 1 and 100.');
     if(state.parties.filter(p=>p.status==='waiting').length>=200) fail('The waiting list is full.');
-    state.parties.push({id:uuid(),name,size,notes,arrivedAt:now,status:'waiting'});
+    state.parties.push({id:uuid(),name,size,notes,...equipment(action),arrivedAt:now,status:'waiting'});
   } else if(type==='editParty') {
     const party=state.parties.find(p=>p.id===action.id && p.status==='waiting');
     if(!party) fail('This party is no longer waiting.');
     const name=clean(action.name,80),size=Number(action.size);
     if(!name || !integer(size,1,100)) fail('Enter a name and party size between 1 and 100.');
-    Object.assign(party,{name,size,notes:clean(action.notes,300)});
+    Object.assign(party,{name,size,notes:clean(action.notes,300),...equipment(action,party)});
   } else if(type==='cancelParty') {
     const party=state.parties.find(p=>p.id===action.id && p.status==='waiting');
     if(!party) fail('This party is no longer waiting.');
@@ -57,12 +64,16 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
     if(!party) fail('This party has already been seated or removed.');
     const tables=selectedTables(state,action.ids);combineCheck(state,tables);
     if(tables.some(t=>!t.capacity)) fail('Set the capacity for these booths before assigning a party.');
-    if(tables.reduce((n,t)=>n+t.capacity,0)<party.size) fail('These tables do not have enough seats for this party.');
+    if(includesBoothCombination(tables)&&action.boothAcknowledged!==true)fail('Confirm the booth combination notice before seating.');
+    const short=tables.reduce((n,t)=>n+t.capacity,0)<party.size;
+    if(short&&!(action.childOverride===true&&childBoothFit(tables,party.size)))fail('These tables do not have enough seats for this party.');
+    if(short)party.childOverride={extraGuests:1,reason:'Small child at booth',confirmedAt:now};
     const group=tables.length>1?uuid():null;
     for(const t of tables) Object.assign(t,{status:'in_use',group,party:party.id,seatedAt:now});
     Object.assign(party,{status:'seated',seatedAt:now,tables:tables.map(t=>t.id)});
   } else if(type==='combine') {
     const tables=selectedTables(state,action.ids);if(tables.length<2) fail('Select at least two tables.');combineCheck(state,tables);
+    if(includesBoothCombination(tables)&&action.boothAcknowledged!==true)fail('Confirm the booth combination notice before combining.');
     const group=uuid();for(const t of tables)t.group=group;
   } else if(type==='split') {
     const tables=selectedTables(state,action.ids);completeGroups(state,tables);
@@ -90,7 +101,7 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
     if(!Number.isFinite(v.x)||!Number.isFinite(v.y)||v.x<30||v.x>1630||v.y<30||v.y>920)fail('Keep the table inside the floor plan.');
     if(state.tables.some(t=>t.id!==table.id&&t.area===v.area&&t.number===number))fail('That table number already exists in this area.');
     const allowed=[...new Set(Array.isArray(v.allowed)?v.allowed:[])];
-    if(allowed.some(id=>!state.tables.some(t=>t.id===id&&t.id!==table.id&&t.area===v.area&&t.kind==='table'))||v.kind==='booth'&&allowed.length)fail('Only movable tables in the same area can be combined.');
+    if(allowed.some(id=>!state.tables.some(t=>t.id===id&&t.id!==table.id&&t.area===v.area&&!(v.kind==='booth'&&t.kind==='booth'))))fail('Combine a booth with a table, or tables in the same area.');
     if(state.tables.some(t=>(table.allowed.includes(t.id)||allowed.includes(t.id))&&(t.status!=='open'||t.group)))fail('Open and separate linked tables before changing their combinations.');
     for(const t of state.tables) t.allowed=t.allowed.filter(id=>id!==table.id);
     Object.assign(table,{number,area:v.area,kind:v.kind,orientation:v.orientation,capacity,x:v.x,y:v.y,allowed});

@@ -1,3 +1,4 @@
+import {presetCombinations,includesBoothCombination,childBoothFit} from './combinations.js';
 import { suggestTables } from './suggestions.js';
 import { AREAS, WALL_PATH, ROOM_LABELS, DOORS, upgradeNumbering, openSeats } from './floor.js';
 const $=id=>document.getElementById(id), NS='http://www.w3.org/2000/svg';
@@ -36,7 +37,7 @@ async function refresh(force=false){
   try{
     const data=demo?{state:JSON.parse(localStorage.getItem('seating-preview')||'null')||demoInitial(),version:version+1,role:'admin'}:await api(endpoint('state'));
     if(requestedLocation!==locationId||data.version<version)return;
-    if(force||data.version!==version||role!==data.role){state=upgradeNumbering(data.state);version=data.version;role=data.role;selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
+    if(force||data.version!==version||role!==data.role){state=presetCombinations(upgradeNumbering(data.state));version=data.version;role=data.role;selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
     else if(!editing){renderWait();renderSelection();}
     sync(true,demo?'Preview · local changes':'Saved · sharing live');
   }catch(e){sync(false,'Offline · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(force)toast(e.message,true);}
@@ -44,7 +45,7 @@ async function refresh(force=false){
 async function act(action){
   if(busy)return false;busy=true;$('location').disabled=true;sync(false,'Saving…');
   try{const data=demo?{state:demoModel.applyAction(state,action,role),version:version+1}:await api(endpoint('actions'),{method:'POST',body:JSON.stringify({version,action})});
-    state=upgradeNumbering(data.state);version=data.version;if(demo)localStorage.setItem('seating-preview',JSON.stringify(state));
+    state=presetCombinations(upgradeNumbering(data.state));version=data.version;if(demo)localStorage.setItem('seating-preview',JSON.stringify(state));
     if(action.type==='seat'||action.type==='cancelParty')partyId=null;
     selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));render();sync(true,demo?'Preview · local changes':'Saved · sharing live');return true;
   }catch(e){toast(e.message,true);sync(false,'Change not saved');if(e.status===409){busy=false;await refresh(true);}if(e.status===401){$('app').hidden=true;$('login').hidden=false;}return false;}finally{busy=false;$('location').disabled=false;}
@@ -117,6 +118,7 @@ function renderWait(){
     const main=el('div',{class:'guest-main'});main.append(el('strong',{},p.name),el('small',{},`#${index+1}`));
     const meta=el('div',{class:'guest-meta'});meta.append(el('span',{},`${p.size} guests`),el('span',{},`${minutes(p.arrivedAt)} min wait`));row.append(main,meta);
     if(p.source==='qr')row.append(el('small',{class:'qr-source'},p.readyAt?'QR guest · Ready — return to host':'QR guest check-in'));
+    if(p.highChair||p.booster)row.append(el('p',{class:'equipment-badges'},[p.highChair?'High chair':null,p.booster?'Booster seat':null].filter(Boolean).join(' · ')));
     if(p.notes)row.append(el('p',{class:'guest-note'},p.notes));
     const choose=()=>{partyId=p.id;selected.clear();renderWait();renderSelection();renderRecommendations();renderFloor();$('recommend-panel').scrollIntoView({block:'nearest',behavior:'smooth'});};const fit=suggestTables(state.tables,p.size,1)[0];const fitButton=el('button',{class:'guest-fit',type:'button'},fit?`Suggested: ${fit.map(label).join(' + ')} · View options`:'Find tables');fitButton.onclick=e=>{e.stopPropagation();choose();};row.append(fitButton);row.onclick=choose;row.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();choose();}};
     if(partyId===p.id&&canWrite()){
@@ -126,25 +128,42 @@ function renderWait(){
   }));
 }
 function renderSelection(){
-  const box=$('selection-body'),tables=current(),party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');box.replaceChildren();$('selection-title').textContent=party?`Seat ${party.name}`:'Table details';
+  const box=$('selection-body'),tables=current(),party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');const overrideKey=JSON.stringify([party?.id,party?.size,tables.map(t=>[t.id,t.capacity,t.status])]),keepOverride=box.dataset.overrideKey===overrideKey&&!!box.querySelector('#child-override')?.checked;box.dataset.overrideKey=overrideKey;box.replaceChildren();$('selection-title').textContent=party?`Seat ${party.name}`:'Table details';
   if(!canWrite())box.append(el('p',{class:'read-only-note'},'View-only access. Ask an administrator for host access to make changes.'));
   if(party)box.append(el('p',{class:'muted'},`${party.size} guests · Choose a table below or tap tables on the floor.`));
   if(!tables.length){box.append(el('div',{class:'empty'},party?'Choose a suggestion or select tables on the floor.':'Select a table to see seats, status, and available actions.'));return;}
   const summary=el('div',{class:'selection-summary'}),capacity=tables.reduce((n,t)=>n+(t.capacity||0),0),unknown=tables.some(t=>!t.capacity);
   summary.append(el('strong',{},tables.map(label).join(' + ')),el('p',{},unknown?'Capacity unconfirmed':`${capacity} seats total`));
-  for(const t of tables){const p=state.parties.find(p=>p.id===t.party);summary.append(el('p',{},`${label(t)} · ${names[t.status]}${t.seatedAt?' · '+minutes(t.seatedAt)+' min':''}${p?' · '+p.name+' ('+p.size+')':''}`));}box.append(summary);
+  for(const t of tables){const p=state.parties.find(p=>p.id===t.party);summary.append(el('p',{},`${label(t)} · ${names[t.status]}${t.seatedAt?' · '+minutes(t.seatedAt)+' min':''}${p?' · '+p.name+' ('+p.size+')'+(p.highChair?' · High chair':'')+(p.booster?' · Booster':'')+(p.childOverride?' · Child override':''):''}`));}box.append(summary);
   if(!canWrite())return;
-  if(party){const button=el('button',{class:'primary wide'},tables.length>1?'Combine & seat party':'Seat party');button.disabled=unknown||capacity<party.size||tables.some(t=>t.status!=='open');button.onclick=async()=>{if(await act({type:'seat',partyId:party.id,ids:[...selected]}))toast(`${party.name} seated.`);};box.append(button);if(unknown)box.append(el('p',{class:'muted'},'A manager needs to confirm booth capacity first.'));}
+  const boothNotice='This combination includes a fixed booth. Confirm the nearby table works for this party and leaves the aisle clear.';
+  if(includesBoothCombination(tables))box.append(el('p',{class:'combination-notice'},boothNotice));
+  if(party){
+    const button=el('button',{class:'primary wide'},tables.length>1?'Combine & seat party':'Seat party');let override=null;
+    if(childBoothFit(tables,party.size)){
+      const toggle=el('label',{class:'equipment-toggle'});override=el('input',{type:'checkbox',id:'child-override'});override.checked=keepOverride;
+      toggle.append(override,document.createTextNode('Small-child override: 1 extra guest at this booth'));
+      box.append(toggle,el('p',{class:'muted'},'Host must confirm the party fits. The normal booth capacity stays unchanged.'));
+      override.onchange=()=>{button.disabled=!override.checked||tables.some(t=>t.status!=='open');};
+    }
+    button.disabled=unknown||(capacity<party.size&&!override?.checked)||tables.some(t=>t.status!=='open');
+    button.onclick=async()=>{
+      const childOverride=!!override?.checked,boothAcknowledged=includesBoothCombination(tables);
+      if((childOverride||boothAcknowledged)&&!await confirmChange(childOverride?'Confirm child seating override':'Confirm booth combination',childOverride?`Seat ${party.size} guests at this ${capacity}-seat booth, including a small child? Confirm the party fits before seating.`:boothNotice))return;
+      if(await act({type:'seat',partyId:party.id,ids:tables.map(t=>t.id),childOverride,boothAcknowledged}))toast(`${party.name} seated.`);
+    };box.append(button);if(unknown)box.append(el('p',{class:'muted'},'A manager needs to confirm booth capacity first.'));
+  }
   const actions=el('div',{class:'actions'});
   for(const status of ['open','in_use','cleaning']){const b=el('button',{class:'small'},status==='in_use'?'Mark in use':status==='open'?'Mark open':'Cleaning');b.onclick=async()=>{if(tables.some(t=>t.party)&&status!=='in_use'&&!await confirmChange('Clear seated party?',`Mark ${tables.map(label).join(' + ')} ${names[status].toLowerCase()} and finish the seated party?`))return;await act({type:'status',ids:[...selected],status});};actions.append(b);}box.append(actions);
   const grouping=el('div',{class:'actions'});
-  if(tables.length>1&&tables.every(t=>t.status==='open')){const b=el('button',{class:'small'},'Combine tables');b.onclick=()=>act({type:'combine',ids:[...selected]});grouping.append(b);}
+  if(tables.length>1&&tables.every(t=>t.status==='open')){const b=el('button',{class:'small'},'Combine tables');b.onclick=async()=>{const boothAcknowledged=includesBoothCombination(tables);if(boothAcknowledged&&!await confirmChange('Confirm booth combination',boothNotice))return;await act({type:'combine',ids:tables.map(t=>t.id),boothAcknowledged});};grouping.append(b);}
   if(tables.some(t=>t.group)){const b=el('button',{class:'small'},'Separate tables');b.disabled=tables.some(t=>t.status==='in_use');b.onclick=()=>act({type:'split',ids:[...selected]});grouping.append(b);}box.append(grouping);
 }
 function renderRecommendations(){
   const party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');$('recommend-panel').hidden=editing;$('recommend-context').textContent=party?`${party.name} · ${party.size} guests — best fits first`:'Select a waiting party to find an open table that fits.';if(!party){$('recommendations').replaceChildren();return;}
   const candidates=suggestTables(state.tables,party.size);
-  $('recommendations').replaceChildren(...candidates.map(ts=>{const b=el('button',{class:'suggestion'}),info=el('span');info.append(el('strong',{},ts.map(label).join(' + ')),el('small',{},`${ts.reduce((n,t)=>n+t.capacity,0)} seats · ${ts.length>1?'Approved combination':'Open table'}`));b.append(info,el('span',{},'→'));b.onclick=()=>{selected=new Set(ts.map(t=>t.id));setView(ts[0].area);renderFloor();renderSelection();showSidebar('details');};return b;}));
+  candidates.push(...state.tables.filter(t=>t.status==='open'&&!t.group&&childBoothFit([t],party.size)).slice(0,2).map(t=>[t]));
+  $('recommendations').replaceChildren(...candidates.map(ts=>{const b=el('button',{class:'suggestion'}),info=el('span');info.append(el('strong',{},ts.map(label).join(' + ')),el('small',{},`${ts.reduce((n,t)=>n+t.capacity,0)} seats · ${childBoothFit(ts,party.size)?'Small-child override required':includesBoothCombination(ts)?'Booth + table · confirm fit':ts.length>1?'Nearby combination':'Open table'}`));b.append(info,el('span',{},'→'));b.onclick=()=>{selected=new Set(ts.map(t=>t.id));setView(ts[0].area);renderFloor();renderSelection();showSidebar('details');};return b;}));
   if(!candidates.length)$('recommendations').append(el('p',{class:'empty'},'No available fit. A manager can confirm booth capacities or approve table combinations in Layout editor.'));
 }
 function setView(value){closeSidebar();view=value;const boxes={All:[0,-20,1660,950],Dining:[140,550,1495,360],A:[1300,540,340,350],B:[680,610,665,285],C:[155,610,540,285],'Party rooms':[1000,-10,640,220],'Rose City':[1010,-10,190,200],'Azalea Trail':[1190,-10,210,200],'Piney Woods':[1390,-10,250,230]};viewBox=boxes[value]||boxes.All;renderAreas();if(state)renderFloor();}
@@ -153,8 +172,8 @@ function renderEditor(){
   $('layout-panel').hidden=!editing||!tableDraft;if(!editing||!tableDraft)return;
   const t=tableDraft;$('layout-title').textContent=t.id?'Edit '+label(t):'Add table';$('table-area').replaceChildren(...AREAS.map(a=>new Option(a,a)));$('table-area').value=t.area;$('table-number').value=t.number;$('table-kind').value=t.kind;$('table-capacity').value=t.capacity??'';$('table-orientation').value=t.orientation;$('table-x').value=t.x;$('table-y').value=t.y;$('remove-table').hidden=!t.id;renderAllowed(t.allowed||[]);
 }
-function renderAllowed(allowed=[]){const area=$('table-area').value,kind=$('table-kind').value;$('allowed-tables').replaceChildren();if(kind==='booth'){$('allowed-tables').append(el('p',{class:'muted'},'Booths cannot be combined.'));return;}
-  for(const t of state.tables.filter(t=>t.area===area&&t.id!==tableDraft?.id&&t.kind==='table')){const l=el('label'),c=el('input',{type:'checkbox',value:t.id});c.checked=allowed.includes(t.id);l.append(c,document.createTextNode(`${label(t)} · ${t.capacity} seats`));$('allowed-tables').append(l);}
+function renderAllowed(allowed=[]){const area=$('table-area').value,kind=$('table-kind').value;$('allowed-tables').replaceChildren();
+  for(const t of state.tables.filter(t=>t.area===area&&t.id!==tableDraft?.id&&!(kind==='booth'&&t.kind==='booth'))){const l=el('label'),c=el('input',{type:'checkbox',value:t.id});c.checked=allowed.includes(t.id);l.append(c,document.createTextNode(`${label(t)} · ${t.capacity} seats`));$('allowed-tables').append(l);}
 }
 function render(){
   $('guest-checkin').hidden=!canWrite();
@@ -165,7 +184,7 @@ function render(){
   renderAreas();renderFloor();renderWait();renderSelection();renderRecommendations();
   // Keep unsaved layout fields intact while live state polls update the floor.
 }
-function openGuest(p=null){editGuest=p?.id||null;$('guest-title').textContent=p?'Edit waiting party':'Add guests';$('guest-name').value=p?.name||'';$('guest-size').value=p?.size||2;$('guest-notes').value=p?.notes||'';$('guest-dialog').showModal();$('guest-name').focus();}
+function openGuest(p=null){editGuest=p?.id||null;$('guest-title').textContent=p?'Edit waiting party':'Add guests';$('guest-name').value=p?.name||'';$('guest-size').value=p?.size||2;$('guest-notes').value=p?.notes||'';$('guest-highchair').checked=!!p?.highChair;$('guest-booster').checked=!!p?.booster;$('guest-dialog').showModal();$('guest-name').focus();}
 $('login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;$('login-error').textContent='';try{await api('/api/login',{method:'POST',body:JSON.stringify({email:$('email').value,password:$('password').value})});$('password').value='';await loadSession();}catch(error){$('login-error').textContent=error.message;}finally{b.disabled=false;}};
 $('logout').onclick=async()=>{if(!demo)await api('/api/logout',{method:'POST'});locationId=null;state=null;$('app').hidden=true;$('login').hidden=false;if(demo)location.href='/';};
 $('location').onchange=async()=>{locationId=$('location').value;role=locations.find(l=>l.id===locationId).role;selected.clear();partyId=null;tableDraft=null;editing=false;version=-1;await refresh(true);};
@@ -173,7 +192,7 @@ $('live-tab').onclick=()=>{$('app').classList.remove('phone-menu-open');closeSid
 $('phone-floor').onclick=closeSidebar;$('phone-wait').onclick=()=>{editing=false;render();showSidebar('waiting');};$('phone-more').onclick=()=>{const open=$('app').classList.toggle('phone-menu-open');$('phone-more').setAttribute('aria-expanded',open);};
 $('tablet-wait').onclick=()=>showSidebar('waiting');$('tablet-details').onclick=()=>showSidebar('details');$('sidebar-close').onclick=closeSidebar;
 $('add-guest').onclick=()=>openGuest();$('clear-selection').onclick=()=>{selected.clear();renderFloor();renderSelection();};
-$('guest-form').onsubmit=async e=>{e.preventDefault();e.submitter.disabled=true;const ok=await act({type:editGuest?'editParty':'addParty',id:editGuest,name:$('guest-name').value,size:Number($('guest-size').value),notes:$('guest-notes').value});e.submitter.disabled=false;if(ok){$('guest-dialog').close();toast(editGuest?'Party updated.':'Added to waiting list.');}};
+$('guest-form').onsubmit=async e=>{e.preventDefault();e.submitter.disabled=true;const ok=await act({type:editGuest?'editParty':'addParty',id:editGuest,name:$('guest-name').value,size:Number($('guest-size').value),notes:$('guest-notes').value,highChair:$('guest-highchair').checked,booster:$('guest-booster').checked});e.submitter.disabled=false;if(ok){$('guest-dialog').close();toast(editGuest?'Party updated.':'Added to waiting list.');}};
 for(const b of document.querySelectorAll('.close-dialog'))b.onclick=()=>b.closest('dialog').close();
 $('add-table').onclick=()=>{showSidebar('details');tableDraft={area:['A','B','C'].includes(view)?view:'B',number:'',capacity:4,kind:'table',orientation:'lr',x:Math.round(viewBox[0]+viewBox[2]/2),y:Math.round(viewBox[1]+viewBox[3]/2),allowed:[]};selected.clear();renderEditor();$('table-number').focus();};
 $('table-area').onchange=()=>renderAllowed();$('table-kind').onchange=()=>renderAllowed();
@@ -194,12 +213,26 @@ $('upload').onchange=async()=>{
     }
     if(!blob||!['image/png','image/jpeg','image/webp'].includes(blob.type))throw new Error('Choose a PDF, PNG, JPEG, or WebP file.');
     if(demo){const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(blob);});state.background={name:file.name,dataUrl};localStorage.setItem('seating-preview',JSON.stringify(state));}
-    else{const r=await fetch(endpoint('floorplan')+`?version=${version}&name=${encodeURIComponent(file.name)}`,{method:'POST',headers:{'content-type':blob.type},body:blob}),data=await r.json();if(!r.ok)throw new Error(data.error);state=upgradeNumbering(data.state);version=data.version;}
+    else{const r=await fetch(endpoint('floorplan')+`?version=${version}&name=${encodeURIComponent(file.name)}`,{method:'POST',headers:{'content-type':blob.type},body:blob}),data=await r.json();if(!r.ok)throw new Error(data.error);state=presetCombinations(upgradeNumbering(data.state));version=data.version;}
     setView('All');render();toast('Floor plan uploaded. Position and save tables in Layout editor.');sync(true,demo?'Preview · local changes':'Saved · sharing live');
   }catch(e){toast(e.message,true);sync(false,'Upload not saved');}finally{uploadBusy=false;$('location').disabled=false;$('upload').value='';}
 };
 $('staff-open').onclick=async()=>{
-  if(demo){toast('Staff access is managed in the live app.');return;}try{const data=await api('/api/staff');$('staff-list').replaceChildren(...data.users.map(u=>{const row=el('div',{class:'staff-row'}),info=el('div');info.append(el('strong',{},u.display_name||u.email),el('small',{},u.email));row.append(info);if(u.system_admin)row.append(el('small',{},'Administrator'));else{const select=el('select',{'aria-label':`Seating access for ${u.email}`});for(const[v,n]of [['none','No access'],['viewer','Viewer'],['host','Host'],['manager','Manager']])select.add(new Option(n,v));select.value=data.grants.find(g=>g.user_id===u.id&&g.location_id===locationId)?.role||'none';select.onchange=async()=>{select.disabled=true;try{await api('/api/staff',{method:'POST',body:JSON.stringify({userId:u.id,locationId,role:select.value})});toast('Staff access saved.');}catch(e){toast(e.message,true);}finally{select.disabled=false;}};row.append(select);}return row;}));$('staff-dialog').showModal();}catch(e){toast(e.message,true);}
+ if(demo){toast('Seating access is managed in the live app.');return;}
+ const staffLocation=locationId;
+ try{const data=await api('/api/staff');$('staff-location').textContent=locations.find(l=>l.id===staffLocation)?.name||'';
+ $('staff-list').replaceChildren(...data.users.map(u=>{
+  const row=el('div',{class:'staff-row'}),info=el('div');info.append(el('strong',{},u.display_name||u.email),el('small',{},u.email));row.append(info);
+  if(u.system_admin)row.append(el('small',{},'Administrator · full seating access'));
+  else{
+   let saved=data.grants.find(g=>g.user_id===u.id&&g.location_id===staffLocation)?.role||'none';
+   const controls=el('div',{class:'staff-controls'}),toggle=el('label',{class:'equipment-toggle'}),enabled=el('input',{type:'checkbox','aria-label':`Enable seating access for ${u.email}`}),select=el('select',{'aria-label':`Seating role for ${u.email}`});
+   for(const [v,n] of [['host','Host — seat guests'],['viewer','Viewer — view only'],['manager','Manager — edit floor']])select.add(new Option(n,v));
+   const restore=()=>{enabled.checked=saved!=='none';select.value=saved==='none'?'host':saved;select.disabled=saved==='none';};restore();
+   const save=async()=>{const next=enabled.checked?select.value:'none';enabled.disabled=true;select.disabled=true;try{await api('/api/staff',{method:'POST',body:JSON.stringify({userId:u.id,locationId:staffLocation,role:next})});saved=next;toast('Seating access saved.');}catch(e){toast(e.message,true);}finally{enabled.disabled=false;restore();}};
+   enabled.onchange=save;select.onchange=save;toggle.append(enabled,document.createTextNode('Seating access'));controls.append(toggle,select);row.append(controls);
+  }return row;
+ }));$('staff-dialog').showModal();}catch(e){toast(e.message,true);}
 };
 $('demo-reset').onclick=()=>{localStorage.removeItem('seating-preview');selected.clear();partyId=null;refresh(true);};
 setInterval(()=>{if(!document.hidden&&locationId&&!editing)refresh();},5000);
@@ -216,3 +249,5 @@ $('guest-checkin').onclick=()=>{
  $('checkin-dialog').showModal();
 };
 $('checkin-form').onsubmit=async e=>{e.preventDefault();const button=$('checkin-save');button.disabled=true;try{if(await act({type:'guestSettings',enabled:$('checkin-enabled').checked,maxPartySize:Number($('checkin-max').value)})){$('checkin-summary').textContent=state.guestSettings.enabled?'Guests can join online now.':'Online check-in is closed. Existing guests can still check their status.';toast('Guest check-in settings saved.');}}finally{button.disabled=false;}};
+
+$('preset-combinations').onclick=async()=>{if(await confirmChange('Preset nearby combinations?','Add links between neighboring tables in this sectioned floor plan. Existing links stay available. Booth combinations require a notice before use. Review links after moving tables or uploading a different plan.')){if(await act({type:'presetCombinations'})){tableDraft=null;render();toast('Nearby combinations are ready.');}}};

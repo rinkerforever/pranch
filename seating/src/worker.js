@@ -1,3 +1,4 @@
+import {presetCombinations} from '../public/combinations.js';
 import {guestApi} from './guest.js';
 import qrcode from 'qrcode-generator';
 import { upgradeNumbering } from '../public/floor.js';
@@ -32,7 +33,7 @@ async function roleFor(env,profile,id){
 }
 async function loadState(env,id,profile){
   const existing=await env.DB.prepare('SELECT version,state_json,updated_at FROM seating_state WHERE location_id=?').bind(id).first();
-  if(existing)return {...existing,state_json:JSON.stringify(upgradeNumbering(JSON.parse(existing.state_json)))};
+  if(existing)return {...existing,state_json:JSON.stringify(presetCombinations(upgradeNumbering(JSON.parse(existing.state_json))))};
   await env.DB.prepare('INSERT OR IGNORE INTO seating_state(location_id,version,state_json,updated_by) VALUES(?,0,?,?)').bind(id,JSON.stringify(initialState()),profile.id).run();
   return env.DB.prepare('SELECT version,state_json,updated_at FROM seating_state WHERE location_id=?').bind(id).first();
 }

@@ -59,7 +59,7 @@ async function guestCall(f,{token='',body,ip='192.0.2.1',origin='https://seating
  return f.env && worker.fetch(new Request(`https://seating.example.test/api/guest/${location}`,{method:body?'POST':'GET',headers:{cookie:token,origin,'CF-Connecting-IP':ip,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),f.env,{waitUntil(){}});
 }
 async function openGuestCheckin(f){await f.call('/api/locations/loc/state');return f.call('/api/locations/loc/actions',{version:0,action:{type:'guestSettings',enabled:true,maxPartySize:8}});}
-const guestJoin={action:'join',name:'Guest One',size:4,notes:'High chair',website:''};
+const guestJoin={action:'join',name:'Guest One',size:4,notes:'High chair',website:'',highChair:true,booster:true};
 test('guest check-in is closed by default, scoped to an active location and enforces origin and size',async t=>{
  t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
  const f=fixture(),first=await guestCall(f),token=first.headers.get('set-cookie').split(';')[0];
@@ -79,7 +79,7 @@ test('concurrent duplicate submissions create one party and private status expos
  const first=await guestCall(f),token=first.headers.get('set-cookie').split(';')[0];
  const results=await Promise.all([guestCall(f,{token,body:guestJoin}),guestCall(f,{token,body:guestJoin})]);
  assert.deepEqual(results.map(r=>r.status),[200,200]);
- let staff=await(await f.call('/api/locations/loc/state')).json();assert.equal(staff.state.parties.length,1);assert.equal(staff.state.parties[0].source,'qr');
+ let staff=await(await f.call('/api/locations/loc/state')).json();assert.equal(staff.state.parties.length,1);assert.equal(staff.state.parties[0].source,'qr');assert.equal(staff.state.parties[0].highChair,true);assert.equal(staff.state.parties[0].booster,true);
  const second=await guestCall(f),otherToken=second.headers.get('set-cookie').split(';')[0];assert.equal((await second.json()).party,null);
  assert.equal((await guestCall(f,{token:otherToken,body:guestJoin})).status,429);
  const publicData=await(await guestCall(f,{token})).json();assert.deepEqual(Object.keys(publicData.party).sort(),['arrivedAt','name','ready','size','status']);assert.ok(!JSON.stringify(publicData).includes('guestTokenHash'));assert.ok(!JSON.stringify(publicData).includes('High chair'));

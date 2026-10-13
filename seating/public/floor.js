@@ -24,7 +24,7 @@ export function initialTables() {
   }
   [31,21,11].forEach((n,i) => add('Piney Woods',n,1428+i*67,45,6));
   [30,20,10].forEach((n,i) => add('Piney Woods',n,1438+i*65,112,4,'tb'));
-  // Combination eligibility is configured by a manager; adjacency alone does not imply permission.
+  // Initial nearby links are preset by combinations.js and remain editable by managers.
   return tables;
 }
 export const FLOOR = { width:1660, height:950 };

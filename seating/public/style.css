@@ -80,3 +80,5 @@
 @media(max-width:599px){.brand .brand-subtitle{display:none}}
 #checkin-qr{display:block;width:220px;max-width:100%;margin:16px auto}#checkin-code{display:flex;flex-direction:column;gap:12px}.checkin-toggle{flex-direction:row;align-items:center}.checkin-toggle input{width:22px;min-height:22px;height:22px}.qr-source{display:block;margin-top:8px;color:#2c7050}.guest-actions{flex-wrap:wrap}
 @media(min-width:600px) and (max-width:850px){.topbar{flex-wrap:wrap;height:auto;min-height:62px}.top-actions{width:100%;justify-content:flex-end}.topbar .top-actions select{margin-right:auto}}
+
+.equipment-options{display:flex;flex-wrap:wrap;gap:10px}.equipment-toggle{display:flex;flex-direction:row;align-items:center;gap:10px;min-height:44px;cursor:pointer}.equipment-toggle input[type="checkbox"]{width:22px;height:22px;min-height:22px;margin:0;flex-shrink:0;accent-color:#98272b}.equipment-badges{color:#714c1f;background:#faf0d9;border-radius:6px;padding:7px;font-size:13px}.combination-notice{border-left:3px solid #b78120;padding:10px;background:#fff3d9;color:#664716;font-size:13px}.staff-controls{display:grid;gap:8px;min-width:190px}.access-location{font-weight:750}
