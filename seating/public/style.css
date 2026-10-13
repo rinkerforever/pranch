@@ -5,7 +5,49 @@
 @media(max-width:780px){.topbar{height:auto;min-height:78px;flex-wrap:wrap;padding:14px;gap:15px}.top-actions{width:100%;margin:0;justify-content:space-between}.top-actions select{max-width:220px}nav{margin-left:auto}.nav{padding:8px}.workspace{grid-template-columns:1fr}.floor-panel{position:static}.floor-scroll{height:48vh;min-height:300px}#floor{min-height:300px}.sidebar{display:grid;grid-template-columns:1fr 1fr;align-items:start}.page-heading h1{font-size:23px}.sync{font-size:10px}.login-shell{grid-template-columns:1fr}.login-art{display:none}.login-card{padding:45px 0}#recommend-panel,#layout-panel{grid-column:1/-1}}
 @media(max-width:520px){.sidebar{display:flex}.page-heading{align-items:flex-start}.sync{max-width:105px}.floor-footer{padding:14px 12px}.legend{gap:9px}.page-heading h1{font-size:20px}.filters button{padding:7px 9px}.floor-header{padding:12px}.brand strong{font-size:17px}.top-actions .quiet{padding:9px;font-size:11px}main{padding:20px 10px}.floor-scroll{height:42vh}}
 
-/* A modest default enlargement; the floor panel keeps scrolling within the page. */
-#floor{width:115%;height:115%}
+/* Fit the drawing inside its panel; use area controls for a closer view. */
+#floor{width:100%;height:100%}
 .open-seat-total{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;color:var(--green)}
 .open-seat-total strong{font-size:18px}.open-seat-total small{font-size:11px;color:var(--muted)}
+
+.door-opening{fill:none;stroke:#2874b7;stroke-width:2;stroke-dasharray:4 4}.door-swing{fill:none;stroke:#2874b7;stroke-width:2}
+.table-node .number{font-size:17px}.table-node .seat-label{font-size:8px}
+.tablet-only{display:none}
+/* Keep service on a single screen; only long lists and editor fields scroll. */
+@media(min-width:600px) and (min-height:500px){
+ #app{height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+ .topbar{height:62px;min-height:62px;padding:0 16px;gap:22px;flex-wrap:nowrap}
+ .brand-mark{padding:9px}.brand strong{font-size:17px}.brand span:not(.brand-mark){font-size:10px}
+ nav{margin:0;gap:12px}.top-actions{width:auto;margin-left:auto}.top-actions select{max-width:170px}
+ main{width:100%;max-width:none;flex:1;min-height:0;padding:8px 12px 12px;display:flex;flex-direction:column}
+ .page-heading{margin-bottom:8px;height:24px;flex-shrink:0}.page-heading .eyebrow{display:none}.page-heading h1{font-size:18px;margin:0;letter-spacing:-.4px}
+ .workspace{flex:1;min-height:0;grid-template-columns:minmax(0,1fr) 290px;gap:12px;align-items:stretch;position:relative}
+ .floor-panel{height:100%;min-height:0;position:static;display:flex;flex-direction:column}
+ .floor-header{padding:6px 10px;gap:8px;flex-shrink:0;flex-wrap:nowrap}
+ .filters{flex-wrap:nowrap;gap:3px}.filters button{min-height:44px;padding:7px 12px;font-size:13px}
+ .zoom button{min-width:44px;min-height:44px}
+ .floor-scroll{flex:1;min-height:0;height:auto;overflow:hidden}#floor{min-height:0;touch-action:none}
+ .floor-footer{padding:8px 12px;gap:6px 12px;flex-shrink:0;font-size:12px}
+ .open-seat-total{gap:4px 12px}.open-seat-total strong{font-size:18px}.open-seat-total small{font-size:11px}
+ .plan-note{display:none}.sidebar{min-height:0;overflow:auto;gap:10px}.sidebar .panel{padding:14px}
+ button,.button,select{min-height:44px}.guest{min-height:52px}.guest strong{font-size:15px}.guest-meta{font-size:13px}
+ dialog{max-height:calc(100dvh - 32px);overflow:auto}input,select,textarea{font-size:16px}
+ #editor-toolbar{padding:5px 10px}#editor-toolbar span{display:none}
+}
+@media(min-width:600px) and (max-width:1400px) and (min-height:500px){
+ .workspace{grid-template-columns:minmax(0,1fr)}.tablet-only{display:flex}
+ .tablet-service{align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid var(--line);flex-shrink:0}
+ .tablet-service button{font-size:14px}.tablet-service b{background:#edf1e9;padding:2px 7px;border-radius:12px}
+ .tablet-service span{font-size:12px;color:var(--muted);margin-left:auto}
+ .sidebar{display:none;position:absolute;right:8px;top:116px;bottom:90px;width:min(350px,90%);padding:8px;background:#f5f6f1;border:1px solid #b7c1b4;border-radius:12px;box-shadow:0 8px 35px #19332640;z-index:5}
+ .sidebar-open .sidebar{display:flex;flex-direction:column}.sidebar .panel{flex-shrink:0}
+ #sidebar-close{align-self:flex-end;flex-shrink:0}
+ .workspace[data-panel=waiting] #selection-panel,.workspace[data-panel=waiting] #layout-panel{display:none}
+ .workspace[data-panel=details] #wait-panel,.workspace[data-panel=details] #recommend-panel{display:none}
+ .topbar{gap:12px}.brand strong{font-size:15px}.top-actions{gap:2px}.top-actions select{max-width:125px}.top-actions button{font-size:12px;padding:8px}
+}
+@media(min-width:600px) and (max-width:850px) and (min-height:500px){
+ .brand-mark{display:none}.brand span:not(.brand-mark){display:none}.topbar{padding:0 10px;gap:8px}.topbar nav{gap:8px}.nav{font-size:12px}.top-actions select{max-width:110px}
+ .floor-header{gap:4px;padding:4px}.filters button{padding:6px 8px;font-size:12px}.zoom button{min-width:40px;padding:5px}
+ .tablet-service span{display:none}.floor-footer #selection-hint{display:none}
+}
