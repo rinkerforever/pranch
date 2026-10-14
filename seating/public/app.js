@@ -1,3 +1,4 @@
+import {ROOM_OPTIONS,roomInfo,activeRoomBlocks,scheduledRooms,walkInTables} from './rooms.js';
 import {planWaitlist,estimateNewParty,waitRange} from './wait-plan.js';
 import {presetCombinations,includesBoothCombination,childBoothFit} from './combinations.js';
 import { suggestTables } from './suggestions.js';
@@ -6,7 +7,7 @@ const $=id=>document.getElementById(id), NS='http://www.w3.org/2000/svg';
 const demo=new URLSearchParams(location.search).get('demo')==='1';
 let state=null,version=0,profile=null,locations=[],locationId=null,role='viewer',selected=new Set(),partyId=null,editing=false,tableDraft=null,editGuest=null,busy=false,view='Dining',viewBox=[140,550,1495,360],toastTimer,uploadBusy=false;
 let demoModel;
-const names={open:'Open',in_use:'In use',cleaning:'Cleaning'};
+const names={open:'Open',in_use:'In use',cleaning:'Cleaning',reserved:'Room held'};
 function el(tag,attrs={},text){const n=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(k==='class')n.className=v;else n.setAttribute(k,v);}if(text!==undefined)n.textContent=text;return n;}
 function svg(tag,attrs={},text){const n=document.createElementNS(NS,tag);for(const[k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text!==undefined)n.textContent=text;return n;}
 function toast(message,error=false){clearTimeout(toastTimer);$('toast').textContent=message;$('toast').className=error?'error':'';$('toast').hidden=false;toastTimer=setTimeout(()=>$('toast').hidden=true,error?9000:4000);}
@@ -39,7 +40,7 @@ async function refresh(force=false){
     const data=demo?{state:JSON.parse(localStorage.getItem('seating-preview')||'null')||demoInitial(),version:version+1,role:'admin'}:await api(endpoint('state'));
     if(requestedLocation!==locationId||data.version<version)return;
     if(force||data.version!==version||role!==data.role){state=presetCombinations(upgradeNumbering(data.state));version=data.version;role=data.role;selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
-    else if(!editing){renderWait();renderSelection();}
+    else if(!editing){renderWait();renderSelection();renderRoomBookings();}
     sync(true,demo?'Preview · local changes':'Saved · sharing live');
   }catch(e){sync(false,'Offline · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(force)toast(e.message,true);}
 }
@@ -98,9 +99,10 @@ function renderFloor(){
   const floor=svg('g',{'clip-path':'url(#floor-view-clip)'});viewport.append(defs,floor);
   if(state.background)floor.append(svg('image',{href:demo?state.background.dataUrl:endpoint('floorplan')+`?v=${version}`,x:0,y:0,width:1660,height:950,preserveAspectRatio:'xMidYMid meet',opacity:.48}));
   else{
-    floor.append(svg('rect',{x:10,y:0,width:1600,height:870,fill:'#f8f9f4'}),svg('path',{d:WALL_PATH,class:'wall'}));
+    floor.append(svg('rect',{x:10,y:0,width:1600,height:870,fill:'#f8f9f4'}),svg('path',{d:activeRoomBlocks(state).some(b=>b.roomId==='combined')?WALL_PATH.replace('M1205 0V130',''):WALL_PATH,class:'wall'}));
+    if(activeRoomBlocks(state).some(b=>b.roomId==='combined')){const divider=svg('path',{d:'M1205 0V130',fill:'none',stroke:'#9562aa','stroke-width':2,'stroke-dasharray':'4 6','aria-label':'Rose City and Azalea Trail divider open for combined booking'});divider.append(svg('title',{},'Divider open · combined room booking'));floor.append(divider);}
     for(const door of DOORS){const g=svg('g',{'aria-label':door.name});g.append(svg('title',{},door.name),svg('path',{d:door.opening,class:'door-opening'}),svg('path',{d:door.swing,class:'door-swing'}));floor.append(g);}
-    for(const[text,x,y]of ROOM_LABELS){const small=!['Funzone','Kitchen'].includes(text);const n=svg('text',{x,y,class:`room-label${small?' small':''}${text.startsWith('Section')?' section':''}`},text);if(text.includes('restroom'))n.setAttribute('transform',`rotate(-90 ${x} ${y})`);floor.append(n);}
+    for(const[text,x,y]of ROOM_LABELS){const small=!['Funzone','Kitchen'].includes(text);const n=svg('text',{x,y,class:`room-label${small?' small':''}${text.startsWith('Section')?' section':''}`},text);if(text.includes('restroom'))n.setAttribute('transform',`rotate(-90 ${x} ${y})`);floor.append(n);if(ROOM_OPTIONS.some(r=>r.areas.length===1&&r.name===text)){const info=roomInfo(state,ROOM_OPTIONS.find(r=>r.name===text).id);floor.append(svg('text',{x,y:y+15,class:'room-label small'},`${info.capacity} seats${info.blocks.length?' · Booked':''}`));}}
     floor.append(svg('rect',{x:1475,y:485,width:94,height:42,rx:3,fill:'none',stroke:'#b1b8ad','stroke-width':2}));
   }
   const groups=[...new Set(state.tables.map(t=>t.group).filter(Boolean))];for(const id of groups){const ts=state.tables.filter(t=>t.group===id);for(let i=1;i<ts.length;i++)floor.append(svg('line',{x1:ts[i-1].x,y1:ts[i-1].y,x2:ts[i].x,y2:ts[i].y,class:'group-line'}));}
@@ -163,6 +165,7 @@ function renderSelection(){
   const summary=el('div',{class:'selection-summary'}),capacity=tables.reduce((n,t)=>n+(t.capacity||0),0),unknown=tables.some(t=>!t.capacity);
   summary.append(el('strong',{},tables.map(label).join(' + ')),el('p',{},unknown?'Capacity unconfirmed':`${capacity} seats total`));
   for(const t of tables){const p=state.parties.find(p=>p.id===t.party);summary.append(el('p',{},`${label(t)} · ${names[t.status]}${t.seatedAt?' · '+minutes(t.seatedAt)+' min':''}${p?' · '+p.name+' ('+p.size+')'+(p.highChair?' · High chair':'')+(p.booster?' · Booster':'')+(p.childOverride?' · Child override':''):''}`));}box.append(summary);
+  if(tables.some(t=>t.roomBlock)){const b=el('button',{class:'primary wide'},'Manage whole-room booking');b.onclick=openRoomBookings;box.append(el('p',{class:'combination-notice'},'These tables belong to a whole-room block.'),b);return;}
   if(!canWrite())return;
   const boothNotice='This combination includes a fixed booth. Confirm the nearby table works for this party and leaves the aisle clear.';
   if(includesBoothCombination(tables))box.append(el('p',{class:'combination-notice'},boothNotice));
@@ -189,7 +192,7 @@ function renderSelection(){
 }
 function renderRecommendations(){
   const party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');$('recommend-panel').hidden=editing;$('recommend-context').textContent=party?`${party.name} · ${party.size} guests — best fits first`:'Select a waiting party to find an open table that fits.';if(!party){$('recommendations').replaceChildren();return;}
-  const candidates=suggestTables(state.tables,party.size);
+  const candidates=suggestTables(walkInTables(state),party.size);
   const planned=currentPlan().rows.find(r=>r.party.id===party.id)?.estimate;
   if(planned?.ready){const key=ts=>ts.map(t=>t.id).sort().join('|'),index=candidates.findIndex(ts=>key(ts)===key(planned.tables));if(index>=0)candidates.splice(index,1);candidates.unshift(planned.tables);}
   candidates.push(...state.tables.filter(t=>t.status==='open'&&!t.group&&childBoothFit([t],party.size)).slice(0,2).map(t=>[t]));
@@ -211,7 +214,7 @@ function render(){
   $('edit-tab').hidden=!canEdit();if(!canEdit())editing=false;$('tablet-wait').hidden=editing;
   $('live-tab').classList.toggle('active',!editing);$('edit-tab').classList.toggle('active',editing);$('editor-toolbar').hidden=!editing;$('wait-panel').hidden=editing;$('selection-panel').hidden=editing;$('layout-panel').hidden=!editing||!tableDraft;
   $('page-title').textContent=editing?'Make the floor yours.':'Let’s get everyone seated.';
-  renderAreas();renderFloor();renderWait();renderSelection();renderRecommendations();
+  renderAreas();renderFloor();renderWait();renderSelection();renderRecommendations();renderRoomBookings();
   // Keep unsaved layout fields intact while live state polls update the floor.
 }
 function openGuest(p=null){editGuest=p?.id||null;$('guest-title').textContent=p?'Edit waiting party':'Add guests';$('guest-name').value=p?.name||'';$('guest-size').value=p?.size||2;$('guest-notes').value=p?.notes||'';$('guest-highchair').checked=!!p?.highChair;$('guest-booster').checked=!!p?.booster;renderGuestQuote();$('guest-dialog').showModal();$('guest-name').focus();}
@@ -285,3 +288,36 @@ $('preset-combinations').onclick=async()=>{if(await confirmChange('Preset nearby
 $('waitlist-open').onclick=()=>{if(!state)return;const settings=currentPlan().settings;$('dining-minutes').value=settings.diningMinutes;$('cleaning-minutes').value=settings.cleaningMinutes;for(const id of ['dining-minutes','cleaning-minutes','wait-settings-save'])$(id).disabled=!canWrite();$('waitlist-dialog').showModal();renderWaitlistView();};
 $('estimate-size').oninput=renderQuote;$('guest-size').addEventListener('input',renderGuestQuote);
 $('wait-settings-form').onsubmit=async e=>{e.preventDefault();$('wait-settings-save').disabled=true;try{if(await act({type:'waitSettings',diningMinutes:Number($('dining-minutes').value),cleaningMinutes:Number($('cleaning-minutes').value)}))toast('Wait estimate assumptions saved.');}finally{$('wait-settings-save').disabled=!canWrite();}};
+
+function roomCapacityText(info){return `${info.capacity} seats${info.unconfirmed?' + unconfirmed capacity':''}`;}
+function updateRoomBookingForm(){
+ const info=roomInfo(state,$('book-room').value);if(!info)return;
+ $('room-capacity').textContent=`${roomCapacityText(info)} · ${info.available&&!info.blocks.length?'Available for whole-room booking':'Currently unavailable'}`;
+ $('room-divider-note').hidden=info.id!=='combined';$('room-size').max=info.capacity;
+ const future=$('room-book-kind').value==='future';$('room-start-label').hidden=!future;$('room-party-label').hidden=future;if(future)$('room-party').value='';
+ const existing=!!$('room-party').value;$('room-new-group').hidden=existing;$('room-name').required=!existing;$('room-size').required=!existing;
+ $('room-book-save').textContent=future?'Save future booking':'Hold whole room';$('room-book-save').disabled=!canWrite()||(!future&&(!info.available||!!info.blocks.length))||info.unconfirmed;
+}
+function renderRoomBookings(){
+ if(!$('rooms-dialog').open)return;
+ $('rooms-location').textContent=locations.find(l=>l.id===locationId)?.name||'';
+ $('room-cards').replaceChildren(...ROOM_OPTIONS.map(room=>{const info=roomInfo(state,room.id),card=el('div',{class:'room-card'});card.append(el('h3',{},room.name),el('strong',{},roomCapacityText(info)),el('p',{},info.blocks.length?'Room booked':info.available?'Available':'Some tables in use / cleaning'));const b=el('button',{},room.id==='combined'?'Book both left rooms':'Choose room');b.disabled=!info.available||!!info.blocks.length||!canWrite();b.onclick=()=>{$('book-room').value=room.id;updateRoomBookingForm();$('room-book-form').scrollIntoView({block:'nearest',behavior:'smooth'});};card.append(b);return card;}));
+ const blocks=activeRoomBlocks(state);$('room-blocks').replaceChildren(...blocks.map(block=>{const card=el('div',{class:'room-block'}),p=state.parties.find(p=>p.id===block.partyId);card.append(el('strong',{},`${block.name} · ${block.size} guests`),el('p',{},`${block.areas.join(' + ')} · ${block.status==='held'?'Held for arrival':'In use'} · Release by ${formatRoomTime(block.endsAt)}`));if(p?.notes)card.append(el('p',{},p.notes));if(p?.highChair||p?.booster)card.append(el('small',{},[p.highChair?'High chair':null,p.booster?'Booster seat':null].filter(Boolean).join(' · ')));
+  if(canWrite()){const actions=el('div',{class:'actions'});if(block.status==='held'){const seat=el('button',{class:'primary'},'Seat group');seat.onclick=()=>act({type:'seatRoom',id:block.id});actions.append(seat);}for(const status of block.status==='held'?['open']:['cleaning','open']){const b=el('button',{},block.status==='held'?'Cancel room hold':status==='cleaning'?'Finish & clean room':'Release as open');b.onclick=async()=>{if(await confirmChange('Release room block?',block.status==='held'?`Cancel the hold for ${block.name}? ${block.fromWaitlist?'The party will return to the waitlist.':'The room will reopen.'}`:`Finish ${block.name} and mark all room tables ${status}?`))await act({type:'releaseRoom',id:block.id,status});};actions.append(b);}card.append(actions);}return card;}));
+ if(!blocks.length)$('room-blocks').append(el('p',{class:'muted'},'No rooms are currently booked.'));
+ const selectedParty=$('room-party').value;$('room-party').replaceChildren(new Option('New group',''),...state.parties.filter(p=>p.status==='waiting').map(p=>new Option(`${p.name} · ${p.size} guests`,p.id)));$('room-party').value=state.parties.some(p=>p.id===selectedParty&&p.status==='waiting')?selectedParty:'';
+ renderRoomSchedule();$('room-book-form').hidden=!canWrite();updateRoomBookingForm();
+}
+function openRoomBookings(){if(!state)return;$('room-book-kind').value='now';$('room-start').value=localRoomTime(Date.now()+3600000);$('room-end').value=localRoomTime(Date.now()+7200000);$('book-room').replaceChildren(...ROOM_OPTIONS.map(r=>new Option(r.name,r.id)));$('rooms-dialog').showModal();renderRoomBookings();}
+$('rooms-open').onclick=openRoomBookings;$('book-room').onchange=updateRoomBookingForm;$('room-party').onchange=updateRoomBookingForm;$('room-book-kind').onchange=updateRoomBookingForm;
+$('room-book-form').onsubmit=async e=>{e.preventDefault();const info=roomInfo(state,$('book-room').value);if(!info)return;$('room-book-save').disabled=true;try{const ok=await act({type:$('room-book-kind').value==='future'?'scheduleRoom':'bookRoom',startsAt:new Date($('room-start').value).getTime(),endsAt:new Date($('room-end').value).getTime(),roomId:info.id,partyId:$('room-party').value||undefined,name:$('room-name').value,size:Number($('room-size').value),notes:$('room-notes').value,highChair:$('room-highchair').checked,booster:$('room-booster').checked});if(ok){$('room-name').value='';$('room-notes').value='';$('room-highchair').checked=false;$('room-booster').checked=false;toast($('room-book-kind').value==='future'?'Future room booking saved.':'Whole room held. Its tables are unavailable for other parties.');}}finally{updateRoomBookingForm();}};
+
+function localRoomTime(ms){const d=new Date(ms);return new Date(ms-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
+function formatRoomTime(ms){return ms?new Date(ms).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'Staff release';}
+function renderRoomSchedule(){
+ const bookings=scheduledRooms(state).sort((a,b)=>a.startsAt-b.startsAt);
+ $('room-timezone').textContent=`Booking times use this device’s timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Rooms stay blocked until staff releases them.`;
+ $('room-upcoming').replaceChildren(...bookings.map(b=>{const card=el('div',{class:'room-block'});card.append(el('strong',{},`${b.name} · ${b.size} guests`),el('p',{},b.areas.join(' + ')),el('p',{},`${formatRoomTime(b.startsAt)} – ${formatRoomTime(b.endsAt)}`));if(b.notes)card.append(el('p',{},b.notes));
+ if(canWrite()){const actions=el('div',{class:'actions'}),start=el('button',{class:'primary'},'Start booking'),cancel=el('button',{},'Cancel booking');start.disabled=Date.now()<b.startsAt-1800000||Date.now()>=b.endsAt;start.onclick=()=>act({type:'activateRoomBooking',id:b.id});cancel.onclick=async()=>{if(await confirmChange('Cancel future room booking?',`Cancel ${b.name} on ${formatRoomTime(b.startsAt)}?`))await act({type:'cancelRoomBooking',id:b.id});};actions.append(start,cancel);card.append(actions);}return card;}));
+ if(!bookings.length)$('room-upcoming').append(el('p',{class:'muted'},'No future room bookings.'));
+}

@@ -31,7 +31,7 @@ export async function guestApi(request,env,ctx,url,{json,readBody,cookies}){
      state=applyAction(state,{type:'cancelParty',id:own.id},'host',now);
    }else if(body.action==='join'){
      // Same-browser retries are idempotent, including after a lost response.
-     if(own&&['waiting','seated'].includes(own.status))return json({party:visibleParty(own),alreadyJoined:true});
+     if(own&&['waiting','seated','reserved'].includes(own.status))return json({party:visibleParty(own),alreadyJoined:true});
      if(!config.enabled)throw new AppError('Online check-in is closed. Please see the host.',409);
      if(body.website||typeof body.name!=='string'||!body.name.trim()||body.name.length>80||!Number.isInteger(body.size)||body.size<1||body.size>config.maxPartySize||typeof body.notes!=='string'||body.notes.length>300)throw new AppError(`Enter your name and a party size from 1 to ${config.maxPartySize}.`);
      const ipHash=await hash(id+':'+(request.headers.get('CF-Connecting-IP')||'local'));
