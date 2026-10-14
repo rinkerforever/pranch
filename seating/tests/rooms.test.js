@@ -34,6 +34,40 @@ test('hold can take a waiting party and cancellation returns that party without 
  s=run(s,{type:'bookRoom',roomId:'rose',partyId:p.id});assert.equal(s.parties.length,1);assert.equal(s.parties[0].highChair,true);
  s=run(s,{type:'releaseRoom',id:s.roomBlocks[0].id,status:'open'});assert.equal(s.parties[0].status,'waiting');assert.equal(s.parties[0].arrivedAt,p.arrivedAt);assert.equal(roomInfo(s,'rose').available,true);
 });
+
+test('released rooms can finish cleaning and be booked again without reloading state',()=>{
+ for(const roomId of ['rose','azalea','piney','combined']){
+  let s=initialState(),before=openSeats(s.tables).count;
+  s=book(s,roomId);const block=s.roomBlocks.at(-1);
+  s=run(s,{type:'seatRoom',id:block.id});
+  s=run(s,{type:'releaseRoom',id:block.id,status:'cleaning'});
+  let info=roomInfo(s,roomId);assert.equal(info.canFinishCleaning,true);assert.equal(info.available,false);
+  assert.equal(openSeats(s.tables).count,before-info.capacity);
+  // A host may clean one table first, then finish the rest of the room.
+  s=run(s,{type:'status',ids:[info.tables[0].id],status:'open'});
+  info=roomInfo(s,roomId);assert.equal(info.canFinishCleaning,true);
+  s=run(s,{type:'status',ids:info.tables.filter(t=>t.status==='cleaning').map(t=>t.id),status:'open'});
+  info=roomInfo(s,roomId);assert.equal(info.available,true);assert.equal(info.canFinishCleaning,false);
+  assert.ok(info.tables.every(t=>!t.cleaningAt&&!t.roomBlock&&!t.party&&!t.group));
+  assert.equal(openSeats(s.tables).count,before);
+  s=book(s,roomId);assert.equal(activeRoomBlocks(s).length,1);
+ }
+});
+
+test('room cleanup is unavailable while any of its tables are occupied or held',()=>{
+ let s=book(initialState());const block=s.roomBlocks[0];
+ assert.equal(roomInfo(s,'rose').canFinishCleaning,false);
+ s=run(s,{type:'releaseRoom',id:block.id,status:'cleaning'});
+ const ids=roomInfo(s,'rose').tables.map(t=>t.id);
+ assert.throws(()=>run(s,{type:'status',ids,status:'open'},'viewer'),/view-only/);
+ s=run(s,{type:'status',ids:[ids[0]],status:'in_use'});
+ assert.equal(roomInfo(s,'rose').canFinishCleaning,false);
+ assert.equal(roomInfo(s,'combined').canFinishCleaning,false);
+ s=run(s,{type:'status',ids:[ids[0]],status:'open'});
+ s=book(s,'azalea');
+ assert.equal(roomInfo(s,'rose').canFinishCleaning,true);
+ assert.equal(roomInfo(s,'combined').canFinishCleaning,false);
+});
 test('booking validates room, capacity, occupancy and permissions; held layout cannot change',()=>{
  const s=initialState();assert.throws(()=>book(s,'rose',21),/party size/);assert.throws(()=>book(s,'missing'),/fully open/);
  assert.throws(()=>run(s,{type:'bookRoom',roomId:'rose',name:'X',size:2},'viewer'),/view-only/);

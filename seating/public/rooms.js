@@ -8,7 +8,9 @@ export const activeRoomBlocks=state=>(state.roomBlocks||[]).filter(b=>['held','i
 export function roomInfo(state,id){
  const room=ROOM_OPTIONS.find(r=>r.id===id);if(!room)return null;
  const tables=state.tables.filter(t=>room.areas.includes(t.area));
- return {...room,tables,capacity:tables.reduce((n,t)=>n+(t.capacity||0),0),unconfirmed:tables.some(t=>!t.capacity),blocks:activeRoomBlocks(state).filter(b=>b.areas.some(a=>room.areas.includes(a))),available:tables.length>0&&tables.every(t=>t.status==='open'&&!t.roomBlock)};
+ const blocks=activeRoomBlocks(state).filter(b=>b.areas.some(a=>room.areas.includes(a)));
+ const canFinishCleaning=!blocks.length&&tables.some(t=>t.status==='cleaning')&&tables.every(t=>['open','cleaning'].includes(t.status)&&!t.roomBlock);
+ return {...room,tables,capacity:tables.reduce((n,t)=>n+(t.capacity||0),0),unconfirmed:tables.some(t=>!t.capacity),blocks,canFinishCleaning,available:tables.length>0&&tables.every(t=>t.status==='open'&&!t.roomBlock)};
 }
 
 export const scheduledRooms=state=>(state.roomSchedule||[]).filter(b=>b.status==='scheduled');

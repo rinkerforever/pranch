@@ -46,10 +46,11 @@ async function refresh(force=false){
 }
 async function act(action){
   if(busy)return false;busy=true;$('location').disabled=true;sync(false,'Saving…');
+  const releasedTables=action.type==='releaseRoom'?state.tables.filter(t=>t.roomBlock===action.id).map(t=>t.id):[];
   try{const data=demo?{state:demoModel.applyAction(state,action,role),version:version+1}:await api(endpoint('actions'),{method:'POST',body:JSON.stringify({version,action})});
     state=presetCombinations(upgradeNumbering(data.state));version=data.version;if(demo)localStorage.setItem('seating-preview',JSON.stringify(state));
     if(action.type==='seat'||action.type==='cancelParty')partyId=null;
-    selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));render();sync(true,demo?'Preview · local changes':'Saved · sharing live');return true;
+    selected=new Set([...selected].filter(id=>!releasedTables.includes(id)&&state.tables.some(t=>t.id===id)));render();sync(true,demo?'Preview · local changes':'Saved · sharing live');return true;
   }catch(e){toast(e.message,true);sync(false,'Change not saved');if(e.status===409){busy=false;await refresh(true);}if(e.status===401){$('app').hidden=true;$('login').hidden=false;}return false;}finally{busy=false;$('location').disabled=false;}
 }
 function current(){return state.tables.filter(t=>selected.has(t.id));}
@@ -301,9 +302,20 @@ function updateRoomBookingForm(){
 function renderRoomBookings(){
  if(!$('rooms-dialog').open)return;
  $('rooms-location').textContent=locations.find(l=>l.id===locationId)?.name||'';
- $('room-cards').replaceChildren(...ROOM_OPTIONS.map(room=>{const info=roomInfo(state,room.id),card=el('div',{class:'room-card'});card.append(el('h3',{},room.name),el('strong',{},roomCapacityText(info)),el('p',{},info.blocks.length?'Room booked':info.available?'Available':'Some tables in use / cleaning'));const b=el('button',{},room.id==='combined'?'Book both left rooms':'Choose room');b.disabled=!info.available||!!info.blocks.length||!canWrite();b.onclick=()=>{$('book-room').value=room.id;updateRoomBookingForm();$('room-book-form').scrollIntoView({block:'nearest',behavior:'smooth'});};card.append(b);return card;}));
+ $('room-cards').replaceChildren(...ROOM_OPTIONS.map(room=>{
+  const info=roomInfo(state,room.id),card=el('div',{class:'room-card'});
+  card.append(el('h3',{},room.name),el('strong',{},roomCapacityText(info)),el('p',{},info.blocks.length?'Room booked':info.available?'Available':info.canFinishCleaning?'Cleaning · mark open when ready':'Some tables in use / cleaning'));
+  const b=el('button',{},room.id==='combined'?'Book both left rooms':'Choose room');b.disabled=!info.available||!!info.blocks.length||!canWrite();
+  b.onclick=()=>{$('book-room').value=room.id;updateRoomBookingForm();$('room-book-form').scrollIntoView({block:'nearest',behavior:'smooth'});};card.append(b);
+  if(info.canFinishCleaning&&canWrite()){
+   const clean=el('button',{class:'primary'},'Mark cleaned & open');
+   clean.onclick=async()=>{clean.disabled=true;try{if(await act({type:'status',ids:info.tables.filter(t=>t.status==='cleaning').map(t=>t.id),status:'open'}))toast(`${room.name} is clean and open.`);}finally{clean.disabled=false;}};
+   card.append(clean);
+  }
+  return card;
+ }));
  const blocks=activeRoomBlocks(state);$('room-blocks').replaceChildren(...blocks.map(block=>{const card=el('div',{class:'room-block'}),p=state.parties.find(p=>p.id===block.partyId);card.append(el('strong',{},`${block.name} · ${block.size} guests`),el('p',{},`${block.areas.join(' + ')} · ${block.status==='held'?'Held for arrival':'In use'} · Release by ${formatRoomTime(block.endsAt)}`));if(p?.notes)card.append(el('p',{},p.notes));if(p?.highChair||p?.booster)card.append(el('small',{},[p.highChair?'High chair':null,p.booster?'Booster seat':null].filter(Boolean).join(' · ')));
-  if(canWrite()){const actions=el('div',{class:'actions'});if(block.status==='held'){const seat=el('button',{class:'primary'},'Seat group');seat.onclick=()=>act({type:'seatRoom',id:block.id});actions.append(seat);}for(const status of block.status==='held'?['open']:['cleaning','open']){const b=el('button',{},block.status==='held'?'Cancel room hold':status==='cleaning'?'Finish & clean room':'Release as open');b.onclick=async()=>{if(await confirmChange('Release room block?',block.status==='held'?`Cancel the hold for ${block.name}? ${block.fromWaitlist?'The party will return to the waitlist.':'The room will reopen.'}`:`Finish ${block.name} and mark all room tables ${status}?`))await act({type:'releaseRoom',id:block.id,status});};actions.append(b);}card.append(actions);}return card;}));
+  if(canWrite()){const actions=el('div',{class:'actions'});if(block.status==='held'){const seat=el('button',{class:'primary'},'Seat group');seat.onclick=()=>act({type:'seatRoom',id:block.id});actions.append(seat);}for(const status of block.status==='held'?['open']:['cleaning','open']){const b=el('button',{},block.status==='held'?'Cancel room hold':status==='cleaning'?'Finish & mark cleaning':'Release as open');b.onclick=async()=>{if(await confirmChange('Release room block?',block.status==='held'?`Cancel the hold for ${block.name}? ${block.fromWaitlist?'The party will return to the waitlist.':'The room will reopen.'}`:`Finish ${block.name} and mark all room tables ${status}?`))await act({type:'releaseRoom',id:block.id,status});};actions.append(b);}card.append(actions);}return card;}));
  if(!blocks.length)$('room-blocks').append(el('p',{class:'muted'},'No rooms are currently booked.'));
  const selectedParty=$('room-party').value;$('room-party').replaceChildren(new Option('New group',''),...state.parties.filter(p=>p.status==='waiting').map(p=>new Option(`${p.name} · ${p.size} guests`,p.id)));$('room-party').value=state.parties.some(p=>p.id===selectedParty&&p.status==='waiting')?selectedParty:'';
  renderRoomSchedule();$('room-book-form').hidden=!canWrite();updateRoomBookingForm();
