@@ -35,7 +35,10 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
   if(['layout','addTable','removeTable','background','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
-  if(type==='presetCombinations') {
+  if(type==='waitSettings') {
+    if(!integer(action.diningMinutes,15,180)||!integer(action.cleaningMinutes,0,30))fail('Use 15–180 minutes for dining and 0–30 minutes for cleaning.');
+    state.waitSettings={diningMinutes:action.diningMinutes,cleaningMinutes:action.cleaningMinutes};
+  } else if(type==='presetCombinations') {
     presetCombinations(state,true);
   } else if(type==='guestSettings') {
     if(typeof action.enabled!=='boolean'||!integer(action.maxPartySize,1,30))fail('Choose a maximum party size from 1 to 30.');
@@ -88,6 +91,8 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
       }
       if(action.status!=='in_use'){t.party=null;t.seatedAt=null;}
       else if(t.status!=='in_use')t.seatedAt=now;
+      if(action.status==='cleaning'&&t.status!=='cleaning')t.cleaningAt=now;
+      if(action.status!=='cleaning')t.cleaningAt=null;
       t.status=action.status;
     }
   } else if(type==='addTable' || type==='layout') {
