@@ -1,12 +1,7 @@
-export const ROOM_OPTIONS=[
- {id:'rose',name:'Rose City',areas:['Rose City']},
- {id:'azalea',name:'Azalea Trail',areas:['Azalea Trail']},
- {id:'piney',name:'Piney Woods',areas:['Piney Woods']},
- {id:'combined',name:'Rose City + Azalea Trail',areas:['Rose City','Azalea Trail']}
-];
+import {roomOptions} from './areas.js';
 export const activeRoomBlocks=state=>(state.roomBlocks||[]).filter(b=>['held','in_use'].includes(b.status));
 export function roomInfo(state,id){
- const room=ROOM_OPTIONS.find(r=>r.id===id);if(!room)return null;
+ const room=roomOptions(state).find(r=>r.id===id);if(!room)return null;
  const tables=state.tables.filter(t=>room.areas.includes(t.area));
  const blocks=activeRoomBlocks(state).filter(b=>b.areas.some(a=>room.areas.includes(a)));
  const canFinishCleaning=!blocks.length&&tables.some(t=>t.status==='cleaning')&&tables.every(t=>['open','cleaning'].includes(t.status)&&!t.roomBlock);

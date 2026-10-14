@@ -1,4 +1,4 @@
-import {AREAS} from './floor.js';
+import {areaOptions} from './areas.js';
 import {pdfLabels,pdfDrawingBounds,detectPlanTables,pagePlacement,planFrame} from './plan-detection.js';
 const NS='http://www.w3.org/2000/svg';
 const node=(tag,text,attrs={})=>{const e=document.createElement(tag);if(text!==null)e.textContent=text;for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);return e;};
@@ -6,7 +6,7 @@ const svg=(tag,attrs,text)=>{const e=document.createElementNS(NS,tag);for(const[
 const field=(title,input)=>{const label=node('label',title);label.append(input);return label;};
 
 // Nothing is persisted until the manager reviews the imported table list and presses Apply.
-export async function reviewFloorImport(file,{locationName,save}){
+export async function reviewFloorImport(file,{locationName,save,areas=areaOptions()}){
  if(file.type!=='application/pdf'&&!file.name.toLowerCase().endsWith('.pdf'))throw new Error('Automatic table import currently needs a PDF with readable table labels. Export the original drawing as a PDF. Your current layout has not changed.');
  const pdfjs=await import('./vendor/pdf.mjs');pdfjs.GlobalWorkerOptions.workerSrc='/vendor/pdf.worker.mjs';
  const doc=await pdfjs.getDocument({data:await file.arrayBuffer(),isEvalSupported:false}).promise;
@@ -20,7 +20,7 @@ export async function reviewFloorImport(file,{locationName,save}){
  const summary=node('p','Reading PDF…',{role:'status',class:'estimate-note'}),error=node('p','',{role:'alert',class:'error'});dialog.append(summary,error);
  const preview=svg('svg',{viewBox:'0 0 1660 950',class:'import-preview',role:'group','aria-label':'Detected tables over uploaded PDF'});
  const scroll=node('div',null,{class:'import-table-scroll'}),table=node('table',null,{class:'import-table'}),head=node('thead',null),hr=node('tr',null);
- for(const text of ['Use','Table number','Area','Seats','Type','Chairs'])hr.append(node('th',text,{scope:'col'}));head.append(hr);const body=node('tbody',null);table.append(head,body);scroll.append(table);dialog.append(preview,scroll);
+ for(const text of ['Use','Table number','Area','Seats','Type','Chairs'])hr.append(node('th',text,{scope:'col'}));head.append(hr);const body=node('tbody',null);table.append(head,body);scroll.append(table);dialog.append(node('p','Check each area assignment. PDF area names are matched to this store’s areas; unmatched tables start in the first table section. Add missing areas in Areas & rooms before importing.',{class:'muted'}),preview,scroll);
  const footer=node('div',null,{class:'dialog-actions'}),apply=node('button','Apply new floor plan',{type:'button',class:'primary'});footer.append(apply);dialog.append(footer);document.body.append(dialog);dialog.showModal();
  let tables=[],blob=null,url=null,loading=false,saving=false,finished=false,declaredSeats=null;
  let resolveResult;const result=new Promise(resolve=>resolveResult=resolve);
@@ -28,7 +28,7 @@ export async function reviewFloorImport(file,{locationName,save}){
  cancel.onclick=()=>{if(!saving)finish(false);};dialog.oncancel=e=>{e.preventDefault();if(!saving)finish(false);};
  function update(){
   const included=tables.filter(t=>t.included),unknown=included.filter(t=>!t.capacity).length,seen=new Set(),duplicates=[];
-  for(const t of included){const key=t.area+'|'+t.number.trim().toLowerCase();if(seen.has(key))duplicates.push(`${t.area}: ${t.number}`);seen.add(key);}
+  for(const t of included){const key=t.area+'|'+t.number.trim().toLowerCase();if(seen.has(key))duplicates.push(`${areas.find(a=>a.id===t.area)?.name||t.area}: ${t.number}`);seen.add(key);}
   const invalid=included.length>200||included.some(t=>!t.number.trim()||(t.capacity!==null&&(!Number.isInteger(t.capacity)||t.capacity<1||t.capacity>20)));
   summary.textContent=`${declaredSeats?'PDF total: '+declaredSeats+' seats. ':''}${included.length} tables · ${included.reduce((n,t)=>n+(t.capacity||0),0)} seats entered · ${unknown} need seat counts. Seat counts are suggestions to verify; blank counts are excluded from seating suggestions until confirmed.`;
   error.textContent=duplicates.length?`Duplicate labels in this PDF: ${[...new Set(duplicates)].join(', ')}. Correct a number or area, or uncheck a duplicate.`:included.length>200?'Select no more than 200 tables. Uncheck extras before applying.':invalid?'Check table numbers and seat counts (1–20, or leave blank).':!included.length?'No readable table labels found. Choose another page or a PDF exported with selectable table numbers. The original layout will stay unchanged.':'';
@@ -48,7 +48,7 @@ export async function reviewFloorImport(file,{locationName,save}){
   body.replaceChildren(...tables.map(t=>{
    const row=node('tr',null),include=node('input',null,{type:'checkbox','aria-label':`Include table ${t.number}`});include.checked=t.included;include.onchange=()=>{t.included=include.checked;update();};
    const number=node('input',null,{maxlength:12,'aria-label':`Number for table ${t.number}`});number.value=t.number;number.oninput=()=>{t.number=number.value;update();};
-   const area=node('select',null,{'aria-label':`Area for table ${t.number}`});for(const a of AREAS)area.append(new Option(a,a));area.value=t.area;area.onchange=()=>{t.area=area.value;update();};
+   const area=node('select',null,{'aria-label':`Area for table ${t.number}`});for(const a of areas)area.append(new Option(a.name,a.id));area.value=t.area;area.onchange=()=>{t.area=area.value;update();};
    const seats=node('input',null,{type:'number',min:1,max:20,placeholder:'Confirm','aria-label':`Seats for table ${t.number}`});seats.value=t.capacity??'';seats.oninput=()=>{t.capacity=seats.value===''?null:Number(seats.value);update();};
    const kind=node('select',null,{'aria-label':`Type for table ${t.number}`});kind.append(new Option('Table','table'),new Option('Booth','booth'));kind.value=t.kind;kind.onchange=()=>{t.kind=kind.value;};
    const orientation=node('select',null,{'aria-label':`Chair sides for table ${t.number}`});orientation.append(new Option('Left / right','lr'),new Option('Top / bottom','tb'));orientation.value=t.orientation;orientation.onchange=()=>{t.orientation=orientation.value;};
@@ -64,7 +64,7 @@ export async function reviewFloorImport(file,{locationName,save}){
    const [text,operators]=await Promise.all([page.getTextContent(),page.getOperatorList()]);if(finished)return;
    const labels=pdfLabels(text.items,base),shapes=pdfDrawingBounds(operators,pdfjs.OPS,base),frame=planFrame(labels,shapes,base.width,base.height);
    declaredSeats=labels.map(l=>/total\s*seats\s*:?\s*(\d+)/i.exec(l.text)?.[1]).find(Boolean)||null;
-   tables=detectPlanTables(labels,shapes,base.width,base.height,frame);
+   tables=detectPlanTables(labels,shapes,base.width,base.height,frame,areas);
    const plan=document.createElement('canvas');plan.width=1660;plan.height=950;const ctx=plan.getContext('2d'),place=pagePlacement(frame.w,frame.h);ctx.fillStyle='#fff';ctx.fillRect(0,0,1660,950);ctx.drawImage(canvas,frame.x*viewport.scale,frame.y*viewport.scale,frame.w*viewport.scale,frame.h*viewport.scale,place.x,place.y,frame.w*place.scale,frame.h*place.scale);
    blob=await new Promise(resolve=>plan.toBlob(resolve,'image/png'));if(!blob)throw new Error('Could not render the PDF. Try exporting it again.');if(url)URL.revokeObjectURL(url);url=URL.createObjectURL(blob);
   }catch(e){blob=null;tables=[];pageError=e.message;}finally{loading=false;pageSelect.disabled=false;bulk.disabled=false;if(!finished){renderRows();if(pageError)error.textContent=pageError;}}

@@ -1,6 +1,7 @@
 import {roomInfo,activeRoomBlocks,scheduledRooms,roomConflict,protectsBooking} from '../public/rooms.js';
+import {areaOptions,roomCombinations} from '../public/areas.js';
 import {presetCombinations,includesBoothCombination,childBoothFit} from '../public/combinations.js';
-import { initialTables, AREAS } from '../public/floor.js';
+import { initialTables } from '../public/floor.js';
 export class AppError extends Error { constructor(message, status=400) { super(message); this.status=status; } }
 const fail = message => { throw new AppError(message); };
 const integer = (v,min,max) => Number.isInteger(v) && v>=min && v<=max;
@@ -35,8 +36,42 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
   const state=structuredClone(original);
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
-  if(['layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
-  if(type==='replaceFloor') {
+  if(['saveArea','deleteArea','addRoomCombination','deleteRoomCombination','layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
+  if(['saveArea','deleteArea','addRoomCombination','deleteRoomCombination'].includes(type)){
+    const areas=structuredClone(areaOptions(state)),combinations=structuredClone(roomCombinations(state));
+    const bookings=[...activeRoomBlocks(state),...scheduledRooms(state).filter(b=>b.endsAt>now)];
+    if(type==='saveArea'){
+      const name=clean(action.name,40),kind=action.kind;
+      if(!name||!['section','room'].includes(kind))fail('Enter an area name and choose table section or party room.');
+      if(areas.some(a=>a.id!==action.id&&a.name.toLowerCase()===name.toLowerCase()))fail('That area name already exists at this location.');
+      if(action.id){const area=areas.find(a=>a.id===action.id);if(!area)fail('Area no longer exists. Reopen Areas & rooms.');
+        if(area.kind!==kind&&(bookings.some(b=>b.areas.includes(area.id))||combinations.some(c=>c.areas.includes(area.id))))fail('Release or cancel this room’s bookings and remove its room combinations before changing its type.');
+        Object.assign(area,{name,kind});
+      }else{if(areas.length>=40)fail('Maximum 40 areas per location.');areas.push({id:uuid(),name,kind});}
+    }else if(type==='deleteArea'){
+      if(!areas.some(a=>a.id===action.id))fail('Area no longer exists.');
+      if(state.tables.some(t=>t.area===action.id))fail('Move or remove this area’s tables before deleting it.');
+      if(bookings.some(b=>b.areas.includes(action.id))||combinations.some(c=>c.areas.includes(action.id)))fail('Remove this area’s bookings and room combinations first.');
+      if(areas.length===1)fail('Keep at least one area at this location.');
+      areas.splice(areas.findIndex(a=>a.id===action.id),1);
+    }else if(type==='addRoomCombination'){
+      const ids=action.areas;
+      if(!Array.isArray(ids)||ids.length<2||ids.length>5||new Set(ids).size!==ids.length||ids.some(id=>!areas.some(a=>a.id===id&&a.kind==='room')))fail('Choose 2–5 different party rooms that can open together.');
+      if(combinations.some(c=>c.areas.length===ids.length&&ids.every(id=>c.areas.includes(id))))fail('That room combination already exists.');
+      if(combinations.length>=40)fail('Maximum 40 room combinations.');
+      combinations.push({id:uuid(),areas:[...ids]});
+    }else{
+      if(!combinations.some(c=>c.id===action.id))fail('Room combination no longer exists.');
+      if(bookings.some(b=>b.roomId===action.id))fail('Release or cancel bookings for this combination before removing it.');
+      combinations.splice(combinations.findIndex(c=>c.id===action.id),1);
+    }
+    state.areaConfig=areas;state.roomCombinations=combinations;
+  }else if(type==='finishRoomCleaning') {
+    const room=roomInfo(state,action.roomId);
+    if(!room?.canFinishCleaning)fail('This room is not ready to finish cleaning.');
+    completeGroups(state,room.tables);
+    for(const t of room.tables.filter(t=>t.status==='cleaning'))Object.assign(t,{status:'open',party:null,group:null,seatedAt:null,cleaningAt:null});
+  }else if(type==='replaceFloor') {
     if(state.tables.some(t=>['in_use','reserved'].includes(t.status))||state.parties.some(p=>['seated','reserved'].includes(p.status))||activeRoomBlocks(state).length)fail('Clear all seated guests and release room holds before replacing this location’s tables.');
     if(scheduledRooms(state).some(b=>b.endsAt>now))fail('Cancel or complete future room bookings before replacing this location’s layout.');
     if(!action.background||!Array.isArray(action.tables)||!action.tables.length||action.tables.length>200)fail('Review between 1 and 200 tables before importing.');
@@ -44,7 +79,7 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
     state.tables=action.tables.map(v=>{
       if(!v||typeof v!=='object')fail('Every imported table needs a number, position and type.');
       const number=clean(v.number,12),area=clean(v.area,40),capacity=v.capacity===null||v.capacity===''?null:Number(v.capacity);
-      if(!number||!AREAS.includes(area)||!['table','booth'].includes(v.kind)||!['lr','tb'].includes(v.orientation))fail('Check the table number, area and type on every imported table.');
+      if(!number||!areaOptions(original).some(a=>a.id===area)||!['table','booth'].includes(v.kind)||!['lr','tb'].includes(v.orientation))fail('Check the table number, area and type on every imported table.');
       if(capacity!==null&&!integer(capacity,1,20))fail('Seats must be 1–20, or blank when unconfirmed.');
       if(!Number.isFinite(v.x)||!Number.isFinite(v.y)||v.x<30||v.x>1630||v.y<30||v.y>920)fail('Keep every imported table inside the floor plan.');
       const key=area+'|'+number.toLowerCase();if(used.has(key))fail(`Duplicate table ${number} in ${area}. Correct or exclude the duplicate before importing.`);used.add(key);
@@ -169,7 +204,7 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
     if(!table)fail('Table not found.');
     if(table.status!=='open'||table.group)fail('Open and separate this table before changing its layout.');
     const v=action.table || {};if([...activeRoomBlocks(state),...scheduledRooms(state).filter(b=>b.endsAt>now)].some(b=>b.areas.includes(v.area)||b.areas.includes(table.area)))fail('Release this room booking before changing its layout.');const number=clean(v.number,12),capacity=v.capacity===''||v.capacity===null?null:Number(v.capacity);
-    if(!number||!AREAS.includes(v.area)||!['table','booth'].includes(v.kind)||!['lr','tb'].includes(v.orientation))fail('Complete the table details.');
+      if(!number||!areaOptions(state).some(a=>a.id===v.area)||!['table','booth'].includes(v.kind)||!['lr','tb'].includes(v.orientation))fail('Complete the table details.');
     if(capacity!==null&&!integer(capacity,1,20))fail('Capacity must be between 1 and 20.');
     if(v.kind==='table'&&capacity===null)fail('Enter the number of chairs.');
     if(!Number.isFinite(v.x)||!Number.isFinite(v.y)||v.x<30||v.x>1630||v.y<30||v.y>920)fail('Keep the table inside the floor plan.');

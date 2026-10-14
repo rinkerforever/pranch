@@ -1,8 +1,9 @@
-import {ROOM_OPTIONS,roomInfo,activeRoomBlocks,scheduledRooms,walkInTables} from './rooms.js';
+import {areaOptions,areaName,roomOptions} from './areas.js';
+import {roomInfo,activeRoomBlocks,scheduledRooms,walkInTables} from './rooms.js';
 import {planWaitlist,estimateNewParty,waitRange} from './wait-plan.js';
 import {presetCombinations,includesBoothCombination,childBoothFit} from './combinations.js';
 import { suggestTables } from './suggestions.js';
-import { AREAS, WALL_PATH, ROOM_LABELS, DOORS, upgradeNumbering, openSeats } from './floor.js';
+import { WALL_PATH, ROOM_LABELS, DOORS, upgradeNumbering, openSeats } from './floor.js';
 const $=id=>document.getElementById(id), NS='http://www.w3.org/2000/svg';
 const demo=new URLSearchParams(location.search).get('demo')==='1';
 let state=null,version=0,profile=null,locations=[],locationId=null,role='viewer',selected=new Set(),partyId=null,editing=false,tableDraft=null,editGuest=null,busy=false,view='Dining',viewBox=[140,550,1495,360],toastTimer,uploadBusy=false;
@@ -39,7 +40,7 @@ async function refresh(force=false){
   try{
     const data=demo?{state:JSON.parse(localStorage.getItem('seating-preview')||'null')||demoInitial(),version:version+1,role:'admin'}:await api(endpoint('state'));
     if(requestedLocation!==locationId||data.version<version)return;
-    if(force||data.version!==version||role!==data.role){state=presetCombinations(upgradeNumbering(data.state));version=data.version;role=data.role;if(force&&state.background?.imported)viewBox=importedViewBox(view);selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
+    if(force||data.version!==version||role!==data.role){state=presetCombinations(upgradeNumbering(data.state));version=data.version;role=data.role;if(force&&(state.background?.imported||state.areaConfig))viewBox=importedViewBox(view);selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
     else if(!editing){renderWait();renderSelection();renderRoomBookings();}
     sync(true,demo?'Preview · local changes':'Saved · sharing live');
   }catch(e){sync(false,'Offline · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(force)toast(e.message,true);}
@@ -56,7 +57,7 @@ async function act(action){
 function current(){return state.tables.filter(t=>selected.has(t.id));}
 function canWrite(){return ['admin','manager','host'].includes(role);}
 function canEdit(){return ['admin','manager'].includes(role);}
-function label(t){return t.number.toUpperCase().startsWith(t.area.toUpperCase())?t.number:`${t.area}-${t.number}`;}
+function label(t){return /^[A-Z]+\d/i.test(t.number)?t.number:`${areaName(state,t.area)}-${t.number}`;}
 function minutes(stamp){return Math.max(0,Math.floor((Date.now()-stamp)/60000));}
 function groupTables(t){return t.group?state.tables.filter(o=>o.group===t.group):[t];}
 function updatePhoneNav(waiting){$('phone-floor').setAttribute('aria-pressed',!waiting);$('phone-wait').setAttribute('aria-pressed',waiting);}
@@ -103,7 +104,14 @@ function renderFloor(){
     floor.append(svg('rect',{x:10,y:0,width:1600,height:870,fill:'#f8f9f4'}),svg('path',{d:activeRoomBlocks(state).some(b=>b.roomId==='combined')?WALL_PATH.replace('M1205 0V130',''):WALL_PATH,class:'wall'}));
     if(activeRoomBlocks(state).some(b=>b.roomId==='combined')){const divider=svg('path',{d:'M1205 0V130',fill:'none',stroke:'#9562aa','stroke-width':2,'stroke-dasharray':'4 6','aria-label':'Rose City and Azalea Trail divider open for combined booking'});divider.append(svg('title',{},'Divider open · combined room booking'));floor.append(divider);}
     for(const door of DOORS){const g=svg('g',{'aria-label':door.name});g.append(svg('title',{},door.name),svg('path',{d:door.opening,class:'door-opening'}),svg('path',{d:door.swing,class:'door-swing'}));floor.append(g);}
-    for(const[text,x,y]of ROOM_LABELS){const small=!['Funzone','Kitchen'].includes(text);const n=svg('text',{x,y,class:`room-label${small?' small':''}${text.startsWith('Section')?' section':''}`},text);if(text.includes('restroom'))n.setAttribute('transform',`rotate(-90 ${x} ${y})`);floor.append(n);if(ROOM_OPTIONS.some(r=>r.areas.length===1&&r.name===text)){const info=roomInfo(state,ROOM_OPTIONS.find(r=>r.name===text).id);floor.append(svg('text',{x,y:y+15,class:'room-label small'},`${info.capacity} seats${info.blocks.length?' · Booked':''}`));}}
+    for(const[text,x,y]of ROOM_LABELS){
+      const areaId=text.startsWith('Section ')?text.slice(8):text,area=areaOptions(state).find(a=>a.id===areaId),isArea=['A','B','C','Rose City','Azalea Trail','Piney Woods'].includes(areaId);
+      if(isArea&&!area)continue;
+      const small=!['Funzone','Kitchen'].includes(text),display=area?area.name:text;
+      const n=svg('text',{x,y,class:`room-label${small?' small':''}${text.startsWith('Section')?' section':''}`},display);if(text.includes('restroom'))n.setAttribute('transform',`rotate(-90 ${x} ${y})`);floor.append(n);
+      const room=roomOptions(state).find(r=>r.areas.length===1&&r.areas[0]===areaId);
+      if(room){const info=roomInfo(state,room.id);floor.append(svg('text',{x,y:y+15,class:'room-label small'},`${info.capacity} seats${info.blocks.length?' · Booked':''}`));}
+    }
     floor.append(svg('rect',{x:1475,y:485,width:94,height:42,rx:3,fill:'none',stroke:'#b1b8ad','stroke-width':2}));
   }
   const groups=[...new Set(state.tables.map(t=>t.group).filter(Boolean))];for(const id of groups){const ts=state.tables.filter(t=>t.group===id);for(let i=1;i<ts.length;i++)floor.append(svg('line',{x1:ts[i-1].x,y1:ts[i-1].y,x2:ts[i].x,y2:ts[i].y,class:'group-line'}));}
@@ -202,22 +210,28 @@ function renderRecommendations(){
 }
 function importedViewBox(value){
  if(value==='All')return [0,0,1660,950];
- const tables=state.tables.filter(t=>value==='Dining'?['A','B','C'].includes(t.area):value==='Party rooms'?!['A','B','C'].includes(t.area):t.area===value);
+ const rooms=new Set(areaOptions(state).filter(a=>a.kind==='room').map(a=>a.id));
+ const tables=state.tables.filter(t=>value==='Dining'?!rooms.has(t.area):value==='Party rooms'?rooms.has(t.area):t.area===value);
  if(!tables.length)return [0,0,1660,950];
  const xs=tables.map(t=>t.x),ys=tables.map(t=>t.y),x=Math.max(0,Math.min(...xs)-65),y=Math.max(0,Math.min(...ys)-65);
  return [x,y,Math.min(1660-x,Math.max(150,Math.max(...xs)-x+65)),Math.min(950-y,Math.max(150,Math.max(...ys)-y+65))];
 }
-function setView(value){closeSidebar();view=value;const boxes={All:[0,-20,1660,950],Dining:[140,550,1495,360],A:[1300,540,340,350],B:[680,610,665,285],C:[155,610,540,285],'Party rooms':[1000,-10,640,220],'Rose City':[1010,-10,190,200],'Azalea Trail':[1190,-10,210,200],'Piney Woods':[1390,-10,250,230]};viewBox=state?.background?.imported?importedViewBox(value):(boxes[value]||boxes.All);renderAreas();if(state)renderFloor();}
-function renderAreas(){const labels={All:'Full plan',Dining:'Dining room',A:'A',B:'B',C:'C','Party rooms':'Party rooms'};if(state?.background?.imported){for(const key of ['A','B','C'])if(!state.tables.some(t=>t.area===key))delete labels[key];if(!state.tables.some(t=>!['A','B','C'].includes(t.area)))delete labels['Party rooms'];}$('areas').replaceChildren(...Object.entries(labels).map(([key,name])=>{const b=el('button',{class:view===key?'active':'','data-view':key},name);b.onclick=()=>setView(key);return b;}));}
+function setView(value){closeSidebar();view=value;const boxes={All:[0,-20,1660,950],Dining:[140,550,1495,360],A:[1300,540,340,350],B:[680,610,665,285],C:[155,610,540,285],'Party rooms':[1000,-10,640,220],'Rose City':[1010,-10,190,200],'Azalea Trail':[1190,-10,210,200],'Piney Woods':[1390,-10,250,230]};viewBox=(state?.background?.imported||state?.areaConfig)?importedViewBox(value):(boxes[value]||boxes.All);renderAreas();if(state)renderFloor();}
+function renderAreas(){
+ const areas=areaOptions(state),labels={All:'Full plan',Dining:'Dining room'};
+ for(const a of areas)labels[a.id]=a.name;
+ if(areas.some(a=>a.kind==='room'))labels['Party rooms']='Party rooms';
+ $('areas').replaceChildren(...Object.entries(labels).map(([key,name])=>{const b=el('button',{class:view===key?'active':'','data-view':key},name);b.onclick=()=>setView(key);return b;}));
+}
 function renderEditor(){
   $('layout-panel').hidden=!editing||!tableDraft;if(!editing||!tableDraft)return;
-  const t=tableDraft;$('layout-title').textContent=t.id?'Edit '+label(t):'Add table';$('table-area').replaceChildren(...AREAS.map(a=>new Option(a,a)));$('table-area').value=t.area;$('table-number').value=t.number;$('table-kind').value=t.kind;$('table-capacity').value=t.capacity??'';$('table-orientation').value=t.orientation;$('table-x').value=t.x;$('table-y').value=t.y;$('remove-table').hidden=!t.id;renderAllowed(t.allowed||[]);
+  const t=tableDraft;$('layout-title').textContent=t.id?'Edit '+label(t):'Add table';$('table-area').replaceChildren(...areaOptions(state).map(a=>new Option(a.name,a.id)));$('table-area').value=t.area;$('table-number').value=t.number;$('table-kind').value=t.kind;$('table-capacity').value=t.capacity??'';$('table-orientation').value=t.orientation;$('table-x').value=t.x;$('table-y').value=t.y;$('remove-table').hidden=!t.id;renderAllowed(t.allowed||[]);
 }
 function renderAllowed(allowed=[]){const area=$('table-area').value,kind=$('table-kind').value;$('allowed-tables').replaceChildren();
   for(const t of state.tables.filter(t=>t.area===area&&t.id!==tableDraft?.id&&!(kind==='booth'&&t.kind==='booth'))){const l=el('label'),c=el('input',{type:'checkbox',value:t.id});c.checked=allowed.includes(t.id);l.append(c,document.createTextNode(`${label(t)} · ${t.capacity} seats`));$('allowed-tables').append(l);}
 }
 function render(){
-  $('guest-checkin').hidden=!canWrite();
+  $('guest-checkin').hidden=!canWrite();$('areas-open').hidden=!canEdit();
   $('phone-location').textContent=locations.find(l=>l.id===locationId)?.name||'';
   $('edit-tab').hidden=!canEdit();if(!canEdit())editing=false;$('tablet-wait').hidden=editing;
   $('live-tab').classList.toggle('active',!editing);$('edit-tab').classList.toggle('active',editing);$('editor-toolbar').hidden=!editing;$('wait-panel').hidden=editing;$('selection-panel').hidden=editing;$('layout-panel').hidden=!editing||!tableDraft;
@@ -235,7 +249,7 @@ $('tablet-wait').onclick=()=>showSidebar('waiting');$('tablet-details').onclick=
 $('add-guest').onclick=()=>openGuest();$('clear-selection').onclick=()=>{selected.clear();renderFloor();renderSelection();};
 $('guest-form').onsubmit=async e=>{e.preventDefault();e.submitter.disabled=true;const ok=await act({type:editGuest?'editParty':'addParty',id:editGuest,name:$('guest-name').value,size:Number($('guest-size').value),notes:$('guest-notes').value,highChair:$('guest-highchair').checked,booster:$('guest-booster').checked});e.submitter.disabled=false;if(ok){$('guest-dialog').close();toast(editGuest?'Party updated.':'Added to waiting list.');}};
 for(const b of document.querySelectorAll('.close-dialog'))b.onclick=()=>b.closest('dialog').close();
-$('add-table').onclick=()=>{showSidebar('details');tableDraft={area:['A','B','C'].includes(view)?view:'B',number:'',capacity:4,kind:'table',orientation:'lr',x:Math.round(viewBox[0]+viewBox[2]/2),y:Math.round(viewBox[1]+viewBox[3]/2),allowed:[]};selected.clear();renderEditor();$('table-number').focus();};
+$('add-table').onclick=()=>{showSidebar('details');tableDraft={area:areaOptions(state).some(a=>a.id===view)?view:areaOptions(state)[0]?.id,number:'',capacity:4,kind:'table',orientation:'lr',x:Math.round(viewBox[0]+viewBox[2]/2),y:Math.round(viewBox[1]+viewBox[3]/2),allowed:[]};selected.clear();renderEditor();$('table-number').focus();};
 $('table-area').onchange=()=>renderAllowed();$('table-kind').onchange=()=>renderAllowed();
 $('layout-form').onsubmit=async e=>{e.preventDefault();if(!tableDraft)return;e.submitter.disabled=true;const table={area:$('table-area').value,number:$('table-number').value,kind:$('table-kind').value,capacity:$('table-capacity').value===''?null:Number($('table-capacity').value),orientation:$('table-orientation').value,x:Number($('table-x').value),y:Number($('table-y').value),allowed:[...$('allowed-tables').querySelectorAll('input:checked')].map(i=>i.value)};const ok=await act({type:tableDraft.id?'layout':'addTable',id:tableDraft.id,table});e.submitter.disabled=false;if(ok){tableDraft=null;$('layout-panel').hidden=true;toast('Table layout saved.');}};
 $('remove-table').onclick=async()=>{if(!tableDraft?.id)return;if(await confirmChange('Remove table?',`Remove ${label(tableDraft)} from this layout? You can add it again in Layout editor.`)&&await act({type:'removeTable',id:tableDraft.id})){tableDraft=null;selected.clear();$('layout-panel').hidden=true;renderFloor();}};
@@ -249,7 +263,7 @@ $('upload').onchange=async()=>{
   sync(false,'Reviewing new floor plan…');
   try{
     const {reviewFloorImport}=await import('./floor-import.js');
-    const saved=await reviewFloorImport(file,{locationName:locations.find(l=>l.id===importLocation)?.name||'Selected location',save:async({blob,tables,page})=>{
+    const saved=await reviewFloorImport(file,{locationName:locations.find(l=>l.id===importLocation)?.name||'Selected location',areas:areaOptions(state),save:async({blob,tables,page})=>{
       if(locationId!==importLocation||version!==importVersion)throw new Error('The floor changed during review. Cancel and upload again.');
       if(demo){
         const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(blob);});
@@ -305,35 +319,37 @@ $('wait-settings-form').onsubmit=async e=>{e.preventDefault();$('wait-settings-s
 
 function roomCapacityText(info){return `${info.capacity} seats${info.unconfirmed?' + unconfirmed capacity':''}`;}
 function updateRoomBookingForm(){
- const info=roomInfo(state,$('book-room').value);if(!info)return;
+ const info=roomInfo(state,$('book-room').value);if(!info){$('room-book-save').disabled=true;return;}
  $('room-capacity').textContent=`${roomCapacityText(info)} · ${info.available&&!info.blocks.length?'Available for whole-room booking':'Currently unavailable'}`;
- $('room-divider-note').hidden=info.id!=='combined';$('room-size').max=info.capacity;
+ $('room-divider-note').hidden=info.areas.length<2;$('room-divider-note').textContent=`${info.name} will be held together. Open the shared divider as needed; all rooms must be available.`;$('room-size').max=info.capacity;
  const future=$('room-book-kind').value==='future';$('room-start-label').hidden=!future;$('room-party-label').hidden=future;if(future)$('room-party').value='';
  const existing=!!$('room-party').value;$('room-new-group').hidden=existing;$('room-name').required=!existing;$('room-size').required=!existing;
- $('room-book-save').textContent=future?'Save future booking':'Hold whole room';$('room-book-save').disabled=!canWrite()||(!future&&(!info.available||!!info.blocks.length))||info.unconfirmed;
+  $('room-book-save').textContent=future?'Save future booking':'Hold whole room';$('room-book-save').disabled=!canWrite()||!info.tables.length||(!future&&(!info.available||!!info.blocks.length))||info.unconfirmed;
 }
 function renderRoomBookings(){
  if(!$('rooms-dialog').open)return;
  $('rooms-location').textContent=locations.find(l=>l.id===locationId)?.name||'';
- $('room-cards').replaceChildren(...ROOM_OPTIONS.map(room=>{
+ const selectedRoom=$('book-room').value,options=roomOptions(state);$('book-room').replaceChildren(...options.map(r=>new Option(r.name,r.id)));if(options.some(r=>r.id===selectedRoom))$('book-room').value=selectedRoom;
+ $('room-cards').replaceChildren(...roomOptions(state).map(room=>{
   const info=roomInfo(state,room.id),card=el('div',{class:'room-card'});
-  card.append(el('h3',{},room.name),el('strong',{},roomCapacityText(info)),el('p',{},info.blocks.length?'Room booked':info.available?'Available':info.canFinishCleaning?'Cleaning · mark open when ready':'Some tables in use / cleaning'));
-  const b=el('button',{},room.id==='combined'?'Book both left rooms':'Choose room');b.disabled=!info.available||!!info.blocks.length||!canWrite();
+  card.append(el('h3',{},room.name),el('strong',{},roomCapacityText(info)),el('p',{},!info.tables.length?'Assign tables in Layout editor':info.blocks.length?'Room booked':info.available?'Available':info.canFinishCleaning?'Cleaning · mark open when ready':'Some tables in use / cleaning'));
+  const b=el('button',{},room.areas.length>1?'Book rooms together':'Choose room');b.disabled=!info.available||!!info.blocks.length||!canWrite();
   b.onclick=()=>{$('book-room').value=room.id;updateRoomBookingForm();$('room-book-form').scrollIntoView({block:'nearest',behavior:'smooth'});};card.append(b);
   if(info.canFinishCleaning&&canWrite()){
    const clean=el('button',{class:'primary'},'Mark cleaned & open');
-   clean.onclick=async()=>{clean.disabled=true;try{if(await act({type:'status',ids:info.tables.filter(t=>t.status==='cleaning').map(t=>t.id),status:'open'}))toast(`${room.name} is clean and open.`);}finally{clean.disabled=false;}};
+   clean.onclick=async()=>{clean.disabled=true;try{if(await act({type:'finishRoomCleaning',roomId:room.id}))toast(`${room.name} is clean and open.`);}finally{clean.disabled=false;}};
    card.append(clean);
   }
   return card;
  }));
- const blocks=activeRoomBlocks(state);$('room-blocks').replaceChildren(...blocks.map(block=>{const card=el('div',{class:'room-block'}),p=state.parties.find(p=>p.id===block.partyId);card.append(el('strong',{},`${block.name} · ${block.size} guests`),el('p',{},`${block.areas.join(' + ')} · ${block.status==='held'?'Held for arrival':'In use'} · Release by ${formatRoomTime(block.endsAt)}`));if(p?.notes)card.append(el('p',{},p.notes));if(p?.highChair||p?.booster)card.append(el('small',{},[p.highChair?'High chair':null,p.booster?'Booster seat':null].filter(Boolean).join(' · ')));
+ if(!roomOptions(state).length)$('room-cards').append(el('p',{class:'muted'},'No party rooms configured. A manager can add them in Areas & rooms, then assign tables in Layout editor.'));
+ const blocks=activeRoomBlocks(state);$('room-blocks').replaceChildren(...blocks.map(block=>{const card=el('div',{class:'room-block'}),p=state.parties.find(p=>p.id===block.partyId);card.append(el('strong',{},`${block.name} · ${block.size} guests`),el('p',{},`${block.areas.map(id=>areaName(state,id)).join(' + ')} · ${block.status==='held'?'Held for arrival':'In use'} · Release by ${formatRoomTime(block.endsAt)}`));if(p?.notes)card.append(el('p',{},p.notes));if(p?.highChair||p?.booster)card.append(el('small',{},[p.highChair?'High chair':null,p.booster?'Booster seat':null].filter(Boolean).join(' · ')));
   if(canWrite()){const actions=el('div',{class:'actions'});if(block.status==='held'){const seat=el('button',{class:'primary'},'Seat group');seat.onclick=()=>act({type:'seatRoom',id:block.id});actions.append(seat);}for(const status of block.status==='held'?['open']:['cleaning','open']){const b=el('button',{},block.status==='held'?'Cancel room hold':status==='cleaning'?'Finish & mark cleaning':'Release as open');b.onclick=async()=>{if(await confirmChange('Release room block?',block.status==='held'?`Cancel the hold for ${block.name}? ${block.fromWaitlist?'The party will return to the waitlist.':'The room will reopen.'}`:`Finish ${block.name} and mark all room tables ${status}?`))await act({type:'releaseRoom',id:block.id,status});};actions.append(b);}card.append(actions);}return card;}));
  if(!blocks.length)$('room-blocks').append(el('p',{class:'muted'},'No rooms are currently booked.'));
  const selectedParty=$('room-party').value;$('room-party').replaceChildren(new Option('New group',''),...state.parties.filter(p=>p.status==='waiting').map(p=>new Option(`${p.name} · ${p.size} guests`,p.id)));$('room-party').value=state.parties.some(p=>p.id===selectedParty&&p.status==='waiting')?selectedParty:'';
- renderRoomSchedule();$('room-book-form').hidden=!canWrite();updateRoomBookingForm();
+ renderRoomSchedule();$('room-book-form').hidden=!canWrite()||!roomOptions(state).length;updateRoomBookingForm();
 }
-function openRoomBookings(){if(!state)return;$('room-book-kind').value='now';$('room-start').value=localRoomTime(Date.now()+3600000);$('room-end').value=localRoomTime(Date.now()+7200000);$('book-room').replaceChildren(...ROOM_OPTIONS.map(r=>new Option(r.name,r.id)));$('rooms-dialog').showModal();renderRoomBookings();}
+function openRoomBookings(){if(!state)return;$('room-book-kind').value='now';$('room-start').value=localRoomTime(Date.now()+3600000);$('room-end').value=localRoomTime(Date.now()+7200000);$('book-room').replaceChildren(...roomOptions(state).map(r=>new Option(r.name,r.id)));$('rooms-dialog').showModal();renderRoomBookings();}
 $('rooms-open').onclick=openRoomBookings;$('book-room').onchange=updateRoomBookingForm;$('room-party').onchange=updateRoomBookingForm;$('room-book-kind').onchange=updateRoomBookingForm;
 $('room-book-form').onsubmit=async e=>{e.preventDefault();const info=roomInfo(state,$('book-room').value);if(!info)return;$('room-book-save').disabled=true;try{const ok=await act({type:$('room-book-kind').value==='future'?'scheduleRoom':'bookRoom',startsAt:new Date($('room-start').value).getTime(),endsAt:new Date($('room-end').value).getTime(),roomId:info.id,partyId:$('room-party').value||undefined,name:$('room-name').value,size:Number($('room-size').value),notes:$('room-notes').value,highChair:$('room-highchair').checked,booster:$('room-booster').checked});if(ok){$('room-name').value='';$('room-notes').value='';$('room-highchair').checked=false;$('room-booster').checked=false;toast($('room-book-kind').value==='future'?'Future room booking saved.':'Whole room held. Its tables are unavailable for other parties.');}}finally{updateRoomBookingForm();}};
 
@@ -342,7 +358,14 @@ function formatRoomTime(ms){return ms?new Date(ms).toLocaleString([],{month:'sho
 function renderRoomSchedule(){
  const bookings=scheduledRooms(state).sort((a,b)=>a.startsAt-b.startsAt);
  $('room-timezone').textContent=`Booking times use this device’s timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Rooms stay blocked until staff releases them.`;
- $('room-upcoming').replaceChildren(...bookings.map(b=>{const card=el('div',{class:'room-block'});card.append(el('strong',{},`${b.name} · ${b.size} guests`),el('p',{},b.areas.join(' + ')),el('p',{},`${formatRoomTime(b.startsAt)} – ${formatRoomTime(b.endsAt)}`));if(b.notes)card.append(el('p',{},b.notes));
+ $('room-upcoming').replaceChildren(...bookings.map(b=>{const card=el('div',{class:'room-block'});card.append(el('strong',{},`${b.name} · ${b.size} guests`),el('p',{},b.areas.map(id=>areaName(state,id)).join(' + ')),el('p',{},`${formatRoomTime(b.startsAt)} – ${formatRoomTime(b.endsAt)}`));if(b.notes)card.append(el('p',{},b.notes));
  if(canWrite()){const actions=el('div',{class:'actions'}),start=el('button',{class:'primary'},'Start booking'),cancel=el('button',{},'Cancel booking');start.disabled=Date.now()<b.startsAt-1800000||Date.now()>=b.endsAt;start.onclick=()=>act({type:'activateRoomBooking',id:b.id});cancel.onclick=async()=>{if(await confirmChange('Cancel future room booking?',`Cancel ${b.name} on ${formatRoomTime(b.startsAt)}?`))await act({type:'cancelRoomBooking',id:b.id});};actions.append(start,cancel);card.append(actions);}return card;}));
  if(!bookings.length)$('room-upcoming').append(el('p',{class:'muted'},'No future room bookings.'));
 }
+
+$('areas-open').onclick=async()=>{
+ if(!state||!canEdit()||busy||uploadBusy)return;
+ const {manageAreas}=await import('./area-manager.js');$('location').disabled=true;
+ try{await manageAreas({getState:()=>state,locationName:locations.find(l=>l.id===locationId)?.name||'',save:async action=>{if(!await act(action))throw new Error($('toast').textContent||'Area change was not saved.');}});}
+ finally{$('location').disabled=false;if(tableDraft)renderEditor();setView(areaOptions(state).some(a=>a.id===view)?view:'All');}
+};

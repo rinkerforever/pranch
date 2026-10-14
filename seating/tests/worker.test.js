@@ -21,6 +21,17 @@ test('API enforces auth, origin, location access and viewer read-only',async t=>
   assert.equal((await f.call('/api/staff')).status,200);
   assert.equal((await f.call('/api/staff',null,'viewer')).status,403);f.sqlite.close();
 });
+test('area configuration persists only at its location and rejects stale updates',async t=>{
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
+ const f=fixture();f.sqlite.exec("INSERT INTO locations VALUES('waco','Waco',1)");
+ await f.call('/api/locations/loc/state');await f.call('/api/locations/waco/state');
+ const body={version:0,action:{type:'saveArea',name:'Brazos Room',kind:'room'}};
+ assert.equal((await f.call('/api/locations/waco/actions',body)).status,200);
+ assert.equal((await f.call('/api/locations/waco/actions',body)).status,409);
+ const waco=await(await f.call('/api/locations/waco/state')).json(),other=await(await f.call('/api/locations/loc/state')).json();
+ assert.equal(waco.state.areaConfig.at(-1).name,'Brazos Room');assert.equal(other.state.areaConfig,undefined);f.sqlite.close();
+});
+
 test('two hosts writing the same version: one succeeds and one conflicts',async t=>{
   t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
   const f=fixture();await f.call('/api/locations/loc/state');

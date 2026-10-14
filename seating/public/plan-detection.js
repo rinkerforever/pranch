@@ -37,8 +37,12 @@ export function pdfLabels(items,viewport){
  });
 }
 const contains=(b,t)=>t.x>b.x&&t.x<b.x+b.w&&t.y>b.y&&t.y<b.y+b.h;
-export function detectPlanTables(labels,shapes,width,height,frame={x:0,y:0,w:width,h:height}){
- const placement=pagePlacement(frame.w,frame.h),areas=labels.map(l=>({...l,area:/^(?:section|area)\s+([ABC])$/i.exec(l.text)?.[1].toUpperCase()||(['Rose City','Azalea Trail','Piney Woods'].find(a=>a.toLowerCase()===l.text.toLowerCase()))})).filter(l=>l.area);
+export function detectPlanTables(labels,shapes,width,height,frame={x:0,y:0,w:width,h:height},configuredAreas=null){
+ const resolveArea=name=>configuredAreas?.find(a=>a.id.toLowerCase()===name.toLowerCase()||a.name.toLowerCase()===name.toLowerCase())?.id;
+ const placement=pagePlacement(frame.w,frame.h),areas=labels.map(l=>{
+  const name=l.text.replace(/^(?:section|area)\s+/i,''),legacy=/^(?:section|area)\s+([ABC])$/i.exec(l.text)?.[1].toUpperCase()||(['Rose City','Azalea Trail','Piney Woods'].find(a=>a.toLowerCase()===l.text.toLowerCase()));
+  return {...l,area:configuredAreas?(resolveArea(l.text)||resolveArea(name)):legacy};
+ }).filter(l=>l.area);
  const found=[];
  for(const l of labels){
   const match=/^(?:(?:table|booth)\s*#?\s*|T\s*[-#]?\s*)?([A-Z]?\d{1,3}[A-Z]?)$/i.exec(l.text);if(!match)continue;
@@ -47,7 +51,8 @@ export function detectPlanTables(labels,shapes,width,height,frame={x:0,y:0,w:wid
   // Unenclosed numeric labels remain review candidates; dimensions / page numbers can be unchecked.
   const center=body?{x:body.x+body.w/2,y:body.y+body.h/2}:l;
   const prefix=/^([ABC])\d/i.exec(match[1]);
-  const area=prefix?.[1].toUpperCase()||areas.toSorted((a,b)=>Math.hypot(a.x-center.x,a.y-center.y)-Math.hypot(b.x-center.x,b.y-center.y))[0]?.area||'A';
+  const prefixArea=prefix&&(configuredAreas?resolveArea(prefix[1]):prefix[1].toUpperCase());
+  const area=prefixArea||areas.toSorted((a,b)=>Math.hypot(a.x-center.x,a.y-center.y)-Math.hypot(b.x-center.x,b.y-center.y))[0]?.area||(configuredAreas?(configuredAreas.find(a=>a.kind==='section')||configuredAreas[0])?.id:'A');
   found.push({number:match[1],area,source:center,body,x:Math.max(30,Math.min(1630,placement.x+(center.x-frame.x)*placement.scale)),y:Math.max(30,Math.min(920,placement.y+(center.y-frame.y)*placement.scale)),capacity:null,kind:/^booth/i.test(l.text)?'booth':'table',orientation:'lr',included:true});
  }
  for(const t of found){
