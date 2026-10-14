@@ -59,6 +59,31 @@ async function guestCall(f,{token='',body,ip='192.0.2.1',origin='https://seating
  return f.env && worker.fetch(new Request(`https://seating.example.test/api/guest/${location}`,{method:body?'POST':'GET',headers:{cookie:token,origin,'CF-Connecting-IP':ip,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),f.env,{waitUntil(){}});
 }
 async function openGuestCheckin(f){await f.call('/api/locations/loc/state');return f.call('/api/locations/loc/actions',{version:0,action:{type:'guestSettings',enabled:true,maxPartySize:8}});}
+
+test('reviewed floor import is atomic, location-scoped, versioned and manager-only',async t=>{
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
+ const f=fixture(),objects=new Map(),deleted=[];
+ f.env.MEDIA={async put(key,bytes){objects.set(key,bytes);},async delete(key){deleted.push(key);objects.delete(key);}};
+ f.sqlite.exec("INSERT INTO locations VALUES('other','Other restaurant',1)");
+ const old=await(await f.call('/api/locations/loc/state')).json(),other=await(await f.call('/api/locations/other/state')).json();
+ const table={number:'A51',area:'A',capacity:4,kind:'table',orientation:'tb',x:1108,y:351};
+ const upload=async(version,tables=[table])=>{
+  const form=new FormData();form.append('image',new Blob([new Uint8Array([137,80,78,71])],{type:'image/png'}),'plan.png');form.append('layout',JSON.stringify({version,tables,name:'Waco.pdf',page:1}));
+  return worker.fetch(new Request('https://seating.example.test/api/locations/loc/floorplan',{method:'POST',headers:{origin:'https://seating.example.test',cookie:'seat_access=admin'},body:form}),f.env,{waitUntil(){}});
+ };
+ assert.equal((await upload(99)).status,409);assert.equal(objects.size,0);
+ assert.equal((await upload(0,[table,table])).status,400);assert.equal(objects.size,0);
+ assert.equal((await f.call('/api/locations/loc/actions',{version:0,action:{type:'replaceFloor',tables:[table],background:{key:'other-private-image'}}})).status,400);
+ const response=await upload(0);assert.equal(response.status,200);const saved=await response.json();assert.equal(saved.state.tables.length,1);assert.equal(saved.version,1);assert.equal(saved.state.background.imported,true);assert.equal(objects.size,1);
+ const unchanged=await(await f.call('/api/locations/other/state')).json();assert.deepEqual(unchanged,other);
+ assert.equal((await upload(0)).status,409);assert.equal(objects.size,1);
+ // An uploaded object is removed if the database write loses a concurrent update.
+ const prepare=f.env.DB.prepare.bind(f.env.DB);f.env.DB.prepare=sql=>sql.startsWith('UPDATE seating_state')?{bind(){return this;},async run(){return{meta:{changes:0}};}}:prepare(sql);
+ assert.equal((await upload(1)).status,409);assert.equal(objects.size,1);assert.equal(deleted.length,1);
+ f.env.DB.prepare=prepare;
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-viewer'})));
+ assert.equal((await upload(1)).status,403);assert.equal(old.state.tables.length,68);f.sqlite.close();
+});
 const guestJoin={action:'join',name:'Guest One',size:4,notes:'High chair',website:'',highChair:true,booster:true};
 test('guest check-in is closed by default, scoped to an active location and enforces origin and size',async t=>{
  t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));

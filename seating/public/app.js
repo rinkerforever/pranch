@@ -39,7 +39,7 @@ async function refresh(force=false){
   try{
     const data=demo?{state:JSON.parse(localStorage.getItem('seating-preview')||'null')||demoInitial(),version:version+1,role:'admin'}:await api(endpoint('state'));
     if(requestedLocation!==locationId||data.version<version)return;
-    if(force||data.version!==version||role!==data.role){state=presetCombinations(upgradeNumbering(data.state));version=data.version;role=data.role;selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
+    if(force||data.version!==version||role!==data.role){state=presetCombinations(upgradeNumbering(data.state));version=data.version;role=data.role;if(force&&state.background?.imported)viewBox=importedViewBox(view);selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
     else if(!editing){renderWait();renderSelection();renderRoomBookings();}
     sync(true,demo?'Preview · local changes':'Saved · sharing live');
   }catch(e){sync(false,'Offline · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(force)toast(e.message,true);}
@@ -56,7 +56,7 @@ async function act(action){
 function current(){return state.tables.filter(t=>selected.has(t.id));}
 function canWrite(){return ['admin','manager','host'].includes(role);}
 function canEdit(){return ['admin','manager'].includes(role);}
-function label(t){return `${t.area}-${t.number}`;}
+function label(t){return t.number.toUpperCase().startsWith(t.area.toUpperCase())?t.number:`${t.area}-${t.number}`;}
 function minutes(stamp){return Math.max(0,Math.floor((Date.now()-stamp)/60000));}
 function groupTables(t){return t.group?state.tables.filter(o=>o.group===t.group):[t];}
 function updatePhoneNav(waiting){$('phone-floor').setAttribute('aria-pressed',!waiting);$('phone-wait').setAttribute('aria-pressed',waiting);}
@@ -79,7 +79,7 @@ function tableSymbol(t){
     sides.forEach((count,side)=>{for(let i=0;i<count;i++){const pos=(i-(count-1)/2)*14;group.append(svg('rect',across?{x:pos-5,y:side===0?-h/2-11:h/2+3,width:10,height:8,rx:2,class:'chair'}:{x:side===0?-w/2-11:w/2+3,y:pos-5,width:8,height:10,rx:2,class:'chair'}));}});
   }
   group.append(svg('rect',{x:-w/2,y:-h/2,width:w,height:h,rx:5,class:'table-surface'}));
-  group.append(svg('text',{x:0,y:0,class:'number'},t.number),svg('text',{x:0,y:12,class:'seat-label'},cap?`${cap} seats`:'Booth · ?'));
+  group.append(svg('text',{x:0,y:0,class:'number'},t.number),svg('text',{x:0,y:12,class:'seat-label'},cap?`${cap} seats`:'Seats · ?'));
   group.append(svg('rect',{x:-w/2-15,y:-h/2-15,width:w+30,height:h+30,rx:7,class:'focus-ring','pointer-events':'all'}));
   if(t.group)group.append(svg('circle',{cx:w/2-2,cy:-h/2+1,r:3,fill:'#3476ba'}));
   group.addEventListener('click',()=>{if(!group.dataset.dragged)chooseTable(t);});
@@ -112,7 +112,7 @@ function renderFloor(){
   const seats=openSeats(state.tables);$('count-seats').textContent=seats.count;$('phone-seat-count').textContent=seats.count;$('phone-seat-note').textContent=seats.unconfirmed?'Confirmed capacity only':'Restaurant total';
   $('seat-count-note').textContent=seats.unconfirmed?`${seats.unconfirmed} open booths/tables need a capacity; excluded from seat count.`:'';
   $('selection-hint').textContent=selected.size?`${selected.size} table${selected.size===1?'':'s'} selected`:'Tap a table to select it';
-  $('plan-note').textContent=state.background?`Uploaded plan: ${state.background.name}. Use Layout editor to align tables with the plan.`:'Chair counts follow your PDF. Booth capacities remain unconfirmed until set in Layout editor.';
+  $('plan-note').textContent=state.background?`Uploaded plan: ${state.background.name}. Review seats and table positions in Layout editor.`:'Chair counts follow your PDF. Booth capacities remain unconfirmed until set in Layout editor.';
 }
 let planCache=null,planState=null,planMinute=-1;
 function currentPlan(){const minute=Math.floor(Date.now()/60000);if(planState!==state||planMinute!==minute){planCache=planWaitlist(state);planState=state;planMinute=minute;}return planCache;}
@@ -200,8 +200,15 @@ function renderRecommendations(){
   $('recommendations').replaceChildren(...candidates.map(ts=>{const b=el('button',{class:'suggestion'}),info=el('span');info.append(el('strong',{},ts.map(label).join(' + ')),el('small',{},`${ts.reduce((n,t)=>n+t.capacity,0)} seats · ${childBoothFit(ts,party.size)?'Small-child override required':includesBoothCombination(ts)?'Booth + table · confirm fit':ts.length>1?'Nearby combination':'Open table'}`));b.append(info,el('span',{},'→'));b.onclick=()=>{selected=new Set(ts.map(t=>t.id));setView(ts[0].area);renderFloor();renderSelection();showSidebar('details');};return b;}));
   if(!candidates.length)$('recommendations').append(el('p',{class:'empty'},'No available fit. A manager can confirm booth capacities or approve table combinations in Layout editor.'));
 }
-function setView(value){closeSidebar();view=value;const boxes={All:[0,-20,1660,950],Dining:[140,550,1495,360],A:[1300,540,340,350],B:[680,610,665,285],C:[155,610,540,285],'Party rooms':[1000,-10,640,220],'Rose City':[1010,-10,190,200],'Azalea Trail':[1190,-10,210,200],'Piney Woods':[1390,-10,250,230]};viewBox=boxes[value]||boxes.All;renderAreas();if(state)renderFloor();}
-function renderAreas(){const labels={All:'Full plan',Dining:'Dining room',A:'A',B:'B',C:'C','Party rooms':'Party rooms'};$('areas').replaceChildren(...Object.entries(labels).map(([key,name])=>{const b=el('button',{class:view===key?'active':'','data-view':key},name);b.onclick=()=>setView(key);return b;}));}
+function importedViewBox(value){
+ if(value==='All')return [0,0,1660,950];
+ const tables=state.tables.filter(t=>value==='Dining'?['A','B','C'].includes(t.area):value==='Party rooms'?!['A','B','C'].includes(t.area):t.area===value);
+ if(!tables.length)return [0,0,1660,950];
+ const xs=tables.map(t=>t.x),ys=tables.map(t=>t.y),x=Math.max(0,Math.min(...xs)-65),y=Math.max(0,Math.min(...ys)-65);
+ return [x,y,Math.min(1660-x,Math.max(150,Math.max(...xs)-x+65)),Math.min(950-y,Math.max(150,Math.max(...ys)-y+65))];
+}
+function setView(value){closeSidebar();view=value;const boxes={All:[0,-20,1660,950],Dining:[140,550,1495,360],A:[1300,540,340,350],B:[680,610,665,285],C:[155,610,540,285],'Party rooms':[1000,-10,640,220],'Rose City':[1010,-10,190,200],'Azalea Trail':[1190,-10,210,200],'Piney Woods':[1390,-10,250,230]};viewBox=state?.background?.imported?importedViewBox(value):(boxes[value]||boxes.All);renderAreas();if(state)renderFloor();}
+function renderAreas(){const labels={All:'Full plan',Dining:'Dining room',A:'A',B:'B',C:'C','Party rooms':'Party rooms'};if(state?.background?.imported){for(const key of ['A','B','C'])if(!state.tables.some(t=>t.area===key))delete labels[key];if(!state.tables.some(t=>!['A','B','C'].includes(t.area)))delete labels['Party rooms'];}$('areas').replaceChildren(...Object.entries(labels).map(([key,name])=>{const b=el('button',{class:view===key?'active':'','data-view':key},name);b.onclick=()=>setView(key);return b;}));}
 function renderEditor(){
   $('layout-panel').hidden=!editing||!tableDraft;if(!editing||!tableDraft)return;
   const t=tableDraft;$('layout-title').textContent=t.id?'Edit '+label(t):'Add table';$('table-area').replaceChildren(...AREAS.map(a=>new Option(a,a)));$('table-area').value=t.area;$('table-number').value=t.number;$('table-kind').value=t.kind;$('table-capacity').value=t.capacity??'';$('table-orientation').value=t.orientation;$('table-x').value=t.x;$('table-y').value=t.y;$('remove-table').hidden=!t.id;renderAllowed(t.allowed||[]);
@@ -236,20 +243,26 @@ for(const[id,factor]of [['zoom-in',.75],['zoom-out',1.333]])$(id).onclick=()=>{c
 // Pan the canvas from an empty area, keeping table dragging exclusive to Layout editor.
 $('floor').addEventListener('pointerdown',e=>{if(e.target.closest('.table-node'))return;const floor=$('floor'),start=[e.clientX,e.clientY],box=[...viewBox],matrix=floor.getScreenCTM();floor.setPointerCapture(e.pointerId);const move=ev=>{viewBox=[box[0]-(ev.clientX-start[0])/matrix.a,box[1]-(ev.clientY-start[1])/matrix.d,box[2],box[3]];floor.setAttribute('viewBox',viewBox.join(' '));const bounds=$('floor-view-bounds');bounds.setAttribute('x',viewBox[0]);bounds.setAttribute('y',viewBox[1]);};const end=()=>{floor.removeEventListener('pointermove',move);floor.removeEventListener('pointerup',end);};floor.addEventListener('pointermove',move);floor.addEventListener('pointerup',end);});
 $('upload').onchange=async()=>{
-  const file=$('upload').files[0];if(!file)return;
-  if(file.size>20*1024*1024){toast('Choose a file smaller than 20 MB.',true);return;}
-  if(!await confirmChange('Replace floor plan background?','Your tables and guest assignments will be kept. After upload, position the tables over your new plan in Layout editor.'))return;
-  uploadBusy=true;$('location').disabled=true;sync(false,'Preparing floor plan…');
+  const file=$('upload').files[0];if(!file||busy||uploadBusy||!canEdit())return;
+  if(file.size>20*1024*1024){toast('Choose a file smaller than 20 MB.',true);$('upload').value='';return;}
+  uploadBusy=true;$('location').disabled=true;const importLocation=locationId,importVersion=version;
+  sync(false,'Reviewing new floor plan…');
   try{
-    let blob=file;
-    if(file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf')){
-      const pdfjs=await import('./vendor/pdf.mjs');pdfjs.GlobalWorkerOptions.workerSrc='/vendor/pdf.worker.mjs';const doc=await pdfjs.getDocument({data:await file.arrayBuffer(),isEvalSupported:false}).promise;const page=await doc.getPage(1),base=page.getViewport({scale:1}),viewport=page.getViewport({scale:Math.min(2500/base.width,2500/base.height)}),canvas=document.createElement('canvas');canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));await doc.destroy();if(doc.numPages>1)toast('Using the first PDF page.');
-    }
-    if(!blob||!['image/png','image/jpeg','image/webp'].includes(blob.type))throw new Error('Choose a PDF, PNG, JPEG, or WebP file.');
-    if(demo){const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(blob);});state.background={name:file.name,dataUrl};localStorage.setItem('seating-preview',JSON.stringify(state));}
-    else{const r=await fetch(endpoint('floorplan')+`?version=${version}&name=${encodeURIComponent(file.name)}`,{method:'POST',headers:{'content-type':blob.type},body:blob}),data=await r.json();if(!r.ok)throw new Error(data.error);state=presetCombinations(upgradeNumbering(data.state));version=data.version;}
-    setView('All');render();toast('Floor plan uploaded. Position and save tables in Layout editor.');sync(true,demo?'Preview · local changes':'Saved · sharing live');
-  }catch(e){toast(e.message,true);sync(false,'Upload not saved');}finally{uploadBusy=false;$('location').disabled=false;$('upload').value='';}
+    const {reviewFloorImport}=await import('./floor-import.js');
+    const saved=await reviewFloorImport(file,{locationName:locations.find(l=>l.id===importLocation)?.name||'Selected location',save:async({blob,tables,page})=>{
+      if(locationId!==importLocation||version!==importVersion)throw new Error('The floor changed during review. Cancel and upload again.');
+      if(demo){
+        const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(blob);});
+        const next=demoModel.applyAction(state,{type:'replaceFloor',tables,background:{name:file.name,dataUrl,imported:true,page}},role);
+        localStorage.setItem('seating-preview',JSON.stringify(next));state=next;version++;
+      }else{
+        const form=new FormData();form.append('image',blob,'floor.png');form.append('layout',JSON.stringify({version:importVersion,name:file.name,page,tables}));
+        const data=await api(`/api/locations/${encodeURIComponent(importLocation)}/floorplan`,{method:'POST',body:form});state=data.state;version=data.version;
+      }
+    }});
+    if(saved){selected.clear();partyId=null;tableDraft=null;setView('All');render();toast('New floor plan and tables saved for this location. Confirm any remaining seat counts in Layout editor.');}
+    sync(true,demo?'Preview · local changes':'Saved · sharing live');
+  }catch(e){toast(e.message,true);sync(false,'Import not saved');}finally{uploadBusy=false;$('location').disabled=false;$('upload').value='';}
 };
 $('staff-open').onclick=async()=>{
  if(demo){toast('Seating access is managed in the live app.');return;}

@@ -35,8 +35,23 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
   const state=structuredClone(original);
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
-  if(['layout','addTable','removeTable','background','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
-  if(type==='scheduleRoom') {
+  if(['layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
+  if(type==='replaceFloor') {
+    if(state.tables.some(t=>['in_use','reserved'].includes(t.status))||state.parties.some(p=>['seated','reserved'].includes(p.status))||activeRoomBlocks(state).length)fail('Clear all seated guests and release room holds before replacing this location’s tables.');
+    if(scheduledRooms(state).some(b=>b.endsAt>now))fail('Cancel or complete future room bookings before replacing this location’s layout.');
+    if(!action.background||!Array.isArray(action.tables)||!action.tables.length||action.tables.length>200)fail('Review between 1 and 200 tables before importing.');
+    const used=new Set();
+    state.tables=action.tables.map(v=>{
+      if(!v||typeof v!=='object')fail('Every imported table needs a number, position and type.');
+      const number=clean(v.number,12),area=clean(v.area,40),capacity=v.capacity===null||v.capacity===''?null:Number(v.capacity);
+      if(!number||!AREAS.includes(area)||!['table','booth'].includes(v.kind)||!['lr','tb'].includes(v.orientation))fail('Check the table number, area and type on every imported table.');
+      if(capacity!==null&&!integer(capacity,1,20))fail('Seats must be 1–20, or blank when unconfirmed.');
+      if(!Number.isFinite(v.x)||!Number.isFinite(v.y)||v.x<30||v.x>1630||v.y<30||v.y>920)fail('Keep every imported table inside the floor plan.');
+      const key=area+'|'+number.toLowerCase();if(used.has(key))fail(`Duplicate table ${number} in ${area}. Correct or exclude the duplicate before importing.`);used.add(key);
+      return {id:uuid(),number,area,capacity,kind:v.kind,orientation:v.orientation,x:v.x,y:v.y,status:'open',party:null,group:null,seatedAt:null,cleaningAt:null,allowed:[]};
+    });
+    state.background=action.background;state.numberingVersion=1;state.combinationVersion=1;
+  } else if(type==='scheduleRoom') {
     const room=roomInfo(state,action.roomId),start=Number(action.startsAt),end=Number(action.endsAt),size=Number(action.size),name=clean(action.name,80);
     if(!room||!room.tables.length||room.unconfirmed)fail('Choose a room with confirmed capacity.');
     if(!name||!integer(size,1,room.capacity))fail(`Enter a group name and size from 1 to ${room.capacity}.`);

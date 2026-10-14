@@ -95,21 +95,30 @@ async function api(request,env,ctx,url){
   if(resource==='state'&&request.method==='GET')return json({state:JSON.parse(row.state_json),version:row.version,role});
   if(resource==='actions'&&request.method==='POST'){
     const body=await readBody(request);if(body.version!==row.version)throw new AppError('Another host updated this floor. The latest changes have been loaded; please try your action again.',409);
-    if(body.action?.type==='background')throw new AppError('Use the floor plan upload.');
+    if(['background','replaceFloor'].includes(body.action?.type))throw new AppError('Use the floor plan upload.');
     const state=applyAction(JSON.parse(row.state_json),body.action||{},role);return saveState(env,id,row,state,profile);
   }
   if(resource==='floorplan'&&request.method==='POST'){
     if(!['admin','manager'].includes(role))throw new AppError('Manager access required.',403);
     if(Number(request.headers.get('content-length'))>12*1024*1024)throw new AppError('Maximum floor plan size is 12 MB.',413);
-    if(Number(url.searchParams.get('version'))!==row.version)throw new AppError('Floor changed. Reload and upload again.',409);
-    const bytes=await request.arrayBuffer();if(bytes.byteLength>12*1024*1024)throw new AppError('Maximum floor plan size is 12 MB.',413);
-    const b=new Uint8Array(bytes),type=request.headers.get('content-type');
+    let bytes=await request.arrayBuffer();if(bytes.byteLength>12*1024*1024)throw new AppError('Maximum floor plan size is 12 MB.',413);
+    let type=request.headers.get('content-type'),imported=null,name=url.searchParams.get('name'),expectedVersion=Number(url.searchParams.get('version'));
+    if(type?.startsWith('multipart/form-data')){
+      let form;try{form=await new Response(bytes,{headers:{'content-type':type}}).formData();}catch{throw new AppError('Invalid floor plan upload.');}
+      const manifest=form.get('layout'),image=form.get('image');
+      if(typeof manifest!=='string'||manifest.length>65536||!image||typeof image.arrayBuffer!=='function')throw new AppError('Upload the reviewed tables and floor image together.');
+      try{imported=JSON.parse(manifest);}catch{throw new AppError('Invalid table review.');}
+      if(!imported||!Array.isArray(imported.tables))throw new AppError('Review the detected tables first.');
+      name=imported.name;expectedVersion=imported.version;type=image.type;bytes=await image.arrayBuffer();
+    }
+    if(expectedVersion!==row.version)throw new AppError('Another host changed this location. Cancel this review and upload again to use the latest state.',409);
+    const b=new Uint8Array(bytes);
     const valid=(type==='image/png'&&b[0]===137&&b[1]===80&&b[2]===78&&b[3]===71)||(type==='image/jpeg'&&b[0]===255&&b[1]===216&&b[2]===255)||(type==='image/webp'&&new TextDecoder().decode(b.slice(0,4))==='RIFF'&&new TextDecoder().decode(b.slice(8,12))==='WEBP');
     if(!valid)throw new AppError('Upload a PNG, JPEG, WebP, or converted PDF floor plan.');
     const key=`seating/${id}/${crypto.randomUUID()}`;
-    await env.MEDIA.put(key,bytes,{httpMetadata:{contentType:type}});
     const old=JSON.parse(row.state_json).background;
-    const state=applyAction(JSON.parse(row.state_json),{type:'background',background:{key,mime:type,name:cleanFilename(url.searchParams.get('name'))}},role);
+    const state=applyAction(JSON.parse(row.state_json),{type:imported?'replaceFloor':'background',tables:imported?.tables,background:{key,mime:type,name:cleanFilename(name),...(imported?{imported:true,page:Math.max(1,Math.min(10000,Number(imported.page)||1))}:{})}},role);
+    await env.MEDIA.put(key,bytes,{httpMetadata:{contentType:type}});
     try{const response=await saveState(env,id,row,state,profile);if(old?.key)ctx.waitUntil(env.MEDIA.delete(old.key));return response;}catch(error){await env.MEDIA.delete(key);throw error;}
   }
   throw new AppError('Method not allowed.',405);
