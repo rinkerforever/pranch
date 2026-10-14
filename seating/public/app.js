@@ -1,4 +1,5 @@
 import {areaOptions,areaName,roomOptions} from './areas.js';
+import {planImage,cleanUpPlan} from './plan-cleanup.js';
 import {roomInfo,activeRoomBlocks,scheduledRooms,walkInTables} from './rooms.js';
 import {planWaitlist,estimateNewParty,waitRange} from './wait-plan.js';
 import {presetCombinations,includesBoothCombination,childBoothFit} from './combinations.js';
@@ -99,7 +100,7 @@ function renderFloor(){
   clip.append(svg('rect',{id:'floor-view-bounds',x:viewBox[0],y:viewBox[1],width:viewBox[2],height:viewBox[3]}));
   const defs=svg('defs');defs.append(clip);
   const floor=svg('g',{'clip-path':'url(#floor-view-clip)'});viewport.append(defs,floor);
-  if(state.background)floor.append(svg('image',{href:demo?state.background.dataUrl:endpoint('floorplan')+`?v=${version}`,x:0,y:0,width:1660,height:950,preserveAspectRatio:'xMidYMid meet',opacity:.48}));
+  if(state.background)floor.append(planImage(demo?state.background.dataUrl:endpoint('floorplan')+`?v=${version}`,state.background.covers));
   else{
     floor.append(svg('rect',{x:10,y:0,width:1600,height:870,fill:'#f8f9f4'}),svg('path',{d:activeRoomBlocks(state).some(b=>b.roomId==='combined')?WALL_PATH.replace('M1205 0V130',''):WALL_PATH,class:'wall'}));
     if(activeRoomBlocks(state).some(b=>b.roomId==='combined')){const divider=svg('path',{d:'M1205 0V130',fill:'none',stroke:'#9562aa','stroke-width':2,'stroke-dasharray':'4 6','aria-label':'Rose City and Azalea Trail divider open for combined booking'});divider.append(svg('title',{},'Divider open · combined room booking'));floor.append(divider);}
@@ -231,6 +232,7 @@ function renderAllowed(allowed=[]){const area=$('table-area').value,kind=$('tabl
   for(const t of state.tables.filter(t=>t.area===area&&t.id!==tableDraft?.id&&!(kind==='booth'&&t.kind==='booth'))){const l=el('label'),c=el('input',{type:'checkbox',value:t.id});c.checked=allowed.includes(t.id);l.append(c,document.createTextNode(`${label(t)} · ${t.capacity} seats`));$('allowed-tables').append(l);}
 }
 function render(){
+  $('clean-plan').hidden=!state.background;
   $('guest-checkin').hidden=!canWrite();$('areas-open').hidden=!canEdit();
   $('phone-location').textContent=locations.find(l=>l.id===locationId)?.name||'';
   $('edit-tab').hidden=!canEdit();if(!canEdit())editing=false;$('tablet-wait').hidden=editing;
@@ -368,4 +370,10 @@ $('areas-open').onclick=async()=>{
  const {manageAreas}=await import('./area-manager.js');$('location').disabled=true;
  try{await manageAreas({getState:()=>state,locationName:locations.find(l=>l.id===locationId)?.name||'',save:async action=>{if(!await act(action))throw new Error($('toast').textContent||'Area change was not saved.');}});}
  finally{$('location').disabled=false;if(tableDraft)renderEditor();setView(areaOptions(state).some(a=>a.id===view)?view:'All');}
+};
+$('clean-plan').onclick=async()=>{
+ if(!state?.background||!canEdit()||busy||uploadBusy)return;
+ uploadBusy=true;$('location').disabled=true;
+ try{await cleanUpPlan({state,href:demo?state.background.dataUrl:endpoint('floorplan')+`?v=${version}`,locationName:locations.find(l=>l.id===locationId)?.name||'',save:async covers=>{if(!await act({type:'cleanPlan',covers}))throw new Error('Cleanup was not saved. Close this window and reopen it to review the latest plan.');toast('Cleaned plan saved for this location.');}});}
+ finally{uploadBusy=false;$('location').disabled=false;}
 };

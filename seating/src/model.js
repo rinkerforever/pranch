@@ -36,7 +36,7 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
   const state=structuredClone(original);
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
-  if(['saveArea','deleteArea','addRoomCombination','deleteRoomCombination','layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
+  if(['cleanPlan','saveArea','deleteArea','addRoomCombination','deleteRoomCombination','layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
   if(['saveArea','deleteArea','addRoomCombination','deleteRoomCombination'].includes(type)){
     const areas=structuredClone(areaOptions(state)),combinations=structuredClone(roomCombinations(state));
     const bookings=[...activeRoomBlocks(state),...scheduledRooms(state).filter(b=>b.endsAt>now)];
@@ -221,6 +221,13 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
     if(scheduledRooms(state).some(b=>b.endsAt>now&&b.areas.includes(tables[0].area)))fail('Cancel upcoming room bookings before removing a room table.');
     if(tables[0].status!=='open'||tables[0].group)fail('Open and separate this table before removing it.');
     state.tables=state.tables.filter(t=>t.id!==action.id);for(const t of state.tables)t.allowed=t.allowed.filter(id=>id!==action.id);
+  } else if(type==='cleanPlan') {
+    if(!state.background)fail('Upload a floor plan before cleaning it.');
+    if(!Array.isArray(action.covers)||action.covers.length>300)fail('Use no more than 300 covers.');
+    state.background.covers=action.covers.map(r=>{
+      if(!r||['x','y','width','height'].some(k=>typeof r[k]!=='number'||!Number.isFinite(r[k]))||r.x<0||r.y<0||r.width<1||r.height<1||r.x+r.width>1660||r.y+r.height>950)fail('Keep every cover inside the floor plan.');
+      return {x:r.x,y:r.y,width:r.width,height:r.height};
+    });
   } else if(type==='background') {
     state.background=action.background;
   } else fail('Unknown action.');

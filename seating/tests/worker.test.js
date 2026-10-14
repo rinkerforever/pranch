@@ -21,6 +21,18 @@ test('API enforces auth, origin, location access and viewer read-only',async t=>
   assert.equal((await f.call('/api/staff')).status,200);
   assert.equal((await f.call('/api/staff',null,'viewer')).status,403);f.sqlite.close();
 });
+test('plan cleanup is location-scoped and versioned without rewriting the stored image',async t=>{
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
+ const f=fixture();f.sqlite.exec("INSERT INTO locations VALUES('waco','Waco',1)");
+ await f.call('/api/locations/loc/state');const initial=await(await f.call('/api/locations/waco/state')).json();
+ initial.state.background={key:'waco-original.png',mime:'image/png',imported:true};
+ f.sqlite.prepare('UPDATE seating_state SET state_json=? WHERE location_id=?').run(JSON.stringify(initial.state),'waco');
+ const body={version:0,action:{type:'cleanPlan',covers:[{x:20,y:30,width:40,height:50}]}};
+ assert.equal((await f.call('/api/locations/waco/actions',body)).status,200);assert.equal((await f.call('/api/locations/waco/actions',body)).status,409);
+ const waco=await(await f.call('/api/locations/waco/state')).json(),other=await(await f.call('/api/locations/loc/state')).json();
+ assert.equal(waco.state.background.key,'waco-original.png');assert.equal(waco.state.background.covers.length,1);assert.equal(other.state.background,null);assert.deepEqual(waco.state.tables,initial.state.tables);f.sqlite.close();
+});
+
 test('area configuration persists only at its location and rejects stale updates',async t=>{
  t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
  const f=fixture();f.sqlite.exec("INSERT INTO locations VALUES('waco','Waco',1)");
