@@ -1,9 +1,10 @@
 import {AppError} from './model.js';
 export const OFFLINE_MESSAGE='Online check-in is temporarily unavailable. Please see the host to join the waitlist.';
+export const HUB_POLL_MS=5000,HUB_OFFLINE_MS=15000;
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json','cache-control':'no-store'}});
 const digest=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),b=>b.toString(16).padStart(2,'0')).join('');
 export const hubRow=(env,id)=>env.DB.prepare('SELECT * FROM seating_hubs WHERE location_id=?').bind(id).first();
-export const hubOnline=(hub,now=Date.now())=>!!hub?.enabled&&now-hub.last_seen<10000;
+export const hubOnline=(hub,now=Date.now())=>!!hub?.enabled&&now-hub.last_seen<HUB_OFFLINE_MS;
 export function hubStatus(hub){return hub?.enabled?{mode:'local',online:hubOnline(hub),lastSeen:hub.last_seen,localUrl:hub.local_url}:null;}
 export async function configureHub(request,env,id,profile){
  if(!profile.system_admin)throw new AppError('System administrator access required.',403);
@@ -17,7 +18,7 @@ export async function configureHub(request,env,id,profile){
  await env.DB.prepare('INSERT INTO seating_hubs(location_id,token_hash,local_url,created_by) VALUES(?,?,?,?)').bind(id,await digest(token),localUrl,profile.id).run();
  return json({locationId:id,token,localUrl,cloudUrl:new URL(request.url).origin});
 }
-export async function relaySave(env,id,expectedVersion,state,requestId,waitMs=8000){
+export async function relaySave(env,id,expectedVersion,state,requestId,waitMs=12000){
  const hub=await hubRow(env,id);if(!hub?.enabled)return null;
  if(!hubOnline(hub))throw new AppError('Restaurant is offline — host check-in only. Changes are available on the restaurant Wi-Fi.',503);
  const key=requestId||crypto.randomUUID(),now=Date.now();

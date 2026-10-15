@@ -409,7 +409,8 @@ $('staff-open').onclick=async()=>{
  }));$('staff-dialog').showModal();}catch(e){toast(e.message,true);}
 };
 $('demo-reset').onclick=()=>{localStorage.removeItem('seating-preview');selected.clear();partyId=null;refresh(true);};
-setInterval(()=>{if(!document.hidden&&locationId&&!editing)refresh();},5000);
+let nextFloorRefresh=0;
+setInterval(()=>{if(!document.hidden&&locationId&&!editing&&Date.now()>=nextFloorRefresh){nextFloorRefresh=Date.now()+(runtime.mode==='local'?5000:10000);refresh();}},1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh(true);});
 window.addEventListener('online',()=>refresh(true));window.addEventListener('offline',()=>{transportReady=false;showReadyAlert();sync(false,'Disconnected · changes unavailable');});
 async function boot(){runtime=demo?{mode:'cloud'}:await runtimeInfo();const local=runtime.mode==='local';$('local-pin-label').hidden=!local;$('cloud-email-label').hidden=local;$('cloud-password-label').hidden=local;$('email').required=!local;$('password').required=!local;$('local-pin').required=local;$('pin-enroll-open').hidden=!local;$('login-copy').textContent=local?'On the restaurant Wi-Fi, enter your four-digit employee PIN.':'Sign in with your Kiosk Manager account.';await loadSession();}

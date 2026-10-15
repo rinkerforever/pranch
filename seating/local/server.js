@@ -5,6 +5,7 @@ import {resolve,join,extname,sep} from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {openStore,hash,pinHash,pinMatches,syncRoster,processCommand} from './store.js';
 import worker from '../src/worker.js';
+import {HUB_POLL_MS,HUB_OFFLINE_MS} from '../src/hub.js';
 import {AppError} from '../src/model.js';
 const PUBLIC=resolve(fileURLToPath(new URL('../public/',import.meta.url)));
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.png':'image/png','.webmanifest':'application/manifest+json','.ico':'image/x-icon'};
@@ -53,7 +54,7 @@ export function createLocalServer(config){
    if(lastCloud-Number(store.meta('receiptCleanup')||0)>3600000){store.db.prepare('DELETE FROM local_receipts WHERE created_at<?').run(lastCloud-2*86400000);store.meta('receiptCleanup',lastCloud);}
   }catch(e){lastError=e.message;}finally{cycling=false;}
  }
- const runtime=()=>({mode:'local',online:Date.now()-lastCloud<10000,lastCloud,lastError,active,requiresRecovery:recovery,localUrl:origin,cloudUrl});
+ const runtime=()=>({mode:'local',online:Date.now()-lastCloud<HUB_OFFLINE_MS,lastCloud,lastError,active,requiresRecovery:recovery,localUrl:origin,cloudUrl});
  function identity(request){
   const tokenValue=request.headers.get('cookie')?.match(/(?:^|;\s*)seat_local=([a-f0-9]+)/)?.[1];
   const row=tokenValue&&store.db.prepare('SELECT u.* FROM local_sessions s JOIN user_profiles u ON s.user_id=u.id JOIN local_pins p ON p.user_id=u.id WHERE s.token_hash=? AND s.expires_at>? AND p.expires_at>? AND u.active=1').get(hash(tokenValue),Date.now(),Date.now());
@@ -120,7 +121,7 @@ export function createLocalServer(config){
    const response=await handle(request,req.socket.remoteAddress);res.writeHead(response.status,Object.fromEntries(response.headers));res.end(Buffer.from(await response.arrayBuffer()));
   }catch{res.writeHead(503);res.end('Local service unavailable');}
  });
- const timer=config.noTimer?null:setInterval(cycle,1500);timer?.unref();
+ const timer=config.noTimer?null:setInterval(cycle,HUB_POLL_MS);timer?.unref();
  return {server,store,handle,cycle,runtime,async close(){closed=true;if(timer)clearInterval(timer);await new Promise(resolve=>server.listening?server.close(resolve):resolve());store.close();}};
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
