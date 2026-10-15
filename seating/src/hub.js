@@ -84,5 +84,5 @@ export async function hubApi(request,env,url){
  const roster=await env.DB.prepare("SELECT u.id,u.auth_user_id,u.email,u.display_name,u.system_admin,CASE WHEN u.system_admin=1 THEN 'admin' ELSE g.role END AS role FROM user_profiles u LEFT JOIN seating_grants g ON g.user_id=u.id AND g.location_id=? WHERE u.active=1 AND (u.system_admin=1 OR g.role IS NOT NULL)").bind(id).all();
  const commands=await env.DB.prepare("SELECT id,expected_version,state_json,expires_at FROM seating_commands WHERE location_id=? AND status='pending' ORDER BY created_at LIMIT 20").bind(id).all();
  const rosterHash=await digest(JSON.stringify(roster.results));
- return json({enabled:!!hub.enabled,location,version:row.version,...(!hub.enabled||url.searchParams.get('since')!==String(row.version)?{state:JSON.parse(row.state_json)}:{}),stateHash:await digest(row.state_json),...(url.searchParams.get('roster')!==rosterHash?{roster:roster.results}:{}),commands:commands.results,localUrl:hub.local_url});
+ return json({deltaSync:true,enabled:!!hub.enabled,location,version:row.version,...(!hub.enabled||url.searchParams.get('since')!==String(row.version)?{state:JSON.parse(row.state_json)}:{}),stateHash:await digest(row.state_json),...(url.searchParams.get('roster')!==rosterHash?{roster:roster.results}:{}),commands:commands.results,localUrl:hub.local_url});
 }

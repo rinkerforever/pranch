@@ -48,7 +48,7 @@ export function createLocalServer(config){
    const results=[];for(const command of remote.commands){await downloadMedia(JSON.parse(command.state_json));results.push({id:command.id,response:processCommand(store,locationId,command)});}
    syncRoster(store,locationId,remote.roster);
    const snapshot=store.snapshot(locationId);await uploadMedia(snapshot.state);
-   await cloud(hubPath,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({version:snapshot.version,...(snapshot.version>remote.version?{state:snapshot.state}:{}),results})});
+   await cloud(hubPath,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({version:snapshot.version,...(!remote.deltaSync||snapshot.version>remote.version?{state:snapshot.state}:{}),results})});
    lastCloud=Date.now();lastError='';
    if(lastCloud-Number(store.meta('receiptCleanup')||0)>3600000){store.db.prepare('DELETE FROM local_receipts WHERE created_at<?').run(lastCloud-2*86400000);store.meta('receiptCleanup',lastCloud);}
   }catch(e){lastError=e.message;}finally{cycling=false;}
