@@ -63,7 +63,8 @@ http://:8081 {
 }
 EOF
 fi
-"$ROOT/web/usr/bin/caddy" validate --config /etc/pizza-ranch-seating/Caddyfile --adapter caddyfile
+chown -R pr-seating-web:pr-seating-web /var/lib/pizza-ranch-seating-web
+runuser -u pr-seating-web -- env HOME=/var/lib/pizza-ranch-seating-web "$ROOT/web/usr/bin/caddy" validate --config /etc/pizza-ranch-seating/Caddyfile --adapter caddyfile
 systemctl daemon-reload
 systemctl enable pizza-ranch-seating.service pizza-ranch-seating-web.service pizza-ranch-seating-update.timer
 systemctl restart pizza-ranch-seating-web.service
