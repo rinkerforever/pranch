@@ -1,5 +1,11 @@
 # Pizza Ranch Seating
 
+## iPad and local Pi mode
+
+The app now supports Home Screen installation, a green table-ready alert, and an optional per-store Raspberry Pi server. Once paired, the Pi is the single seating authority: staff use local employee PINs, cloud users keep email/password sign-in, and public QR check-in closes automatically when the Pi cannot synchronize. Local staff can continue working during an internet outage while the Pi and staff Wi-Fi remain available. Cloud-only locations retain the existing cloud behavior.
+
+See [local/DEPLOYMENT.md](local/DEPLOYMENT.md) for Waco installation, iPad certificate/Home Screen setup, offline authorization periods, GitHub update packages, and recovery. The existing kiosk display service and its updater remain independent. The cloud-only development/deployment details below apply to locations that have not paired a Pi.
+
 Independent Cloudflare Worker for `seating.projectaimnet.com`. Reuses the existing Supabase Auth project, the Cloudflare D1 database's active user/location directory, and the existing R2 bucket under the `seating/` prefix. Kiosk Manager's application code is unchanged.
 
 ## Features

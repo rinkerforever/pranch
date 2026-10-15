@@ -32,12 +32,16 @@ export function createLocalServer(config){
    if(remote.localUrl!==origin)throw Error('Local URL differs from the registered Pi address.');
    if(active){const local=store.snapshot(locationId);if(recovery||!remote.enabled||!local||local.version<remote.version||local.version===remote.version&&JSON.stringify(local.state)!==JSON.stringify(remote.state)){recovery=true;store.meta('recovery','1');throw Error('Data recovery required. This Pi differs from the saved primary server. Seating changes are paused.');}}
    if(!active){
-    if(remote.enabled&&store.meta('active')!=='1')throw Error('This store is already active on a Pi. Restore its complete database; do not bootstrap a second server.');
-    await downloadMedia(remote.state);
-    store.db.prepare('INSERT OR REPLACE INTO seating_state(location_id,version,state_json,updated_by) VALUES(?,?,?,?)').run(locationId,remote.version,JSON.stringify(remote.state),'bootstrap');
-    store.db.prepare('INSERT OR REPLACE INTO locations VALUES(?,?,1)').run(locationId,remote.location.name);
-    syncRoster(store,locationId,remote.roster);
-    await cloud(hubPath,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({activate:true,version:remote.version,stateHash:remote.stateHash})});
+    if(remote.enabled){
+     const pending=store.snapshot(locationId);
+     if(store.meta('activating')!==remote.stateHash||!pending||pending.version!==remote.version||JSON.stringify(pending.state)!==JSON.stringify(remote.state))throw Error('This store is already active on a Pi. Restore its complete database; do not bootstrap a second server.');
+    }else{
+     await downloadMedia(remote.state);
+     store.db.prepare('INSERT OR REPLACE INTO seating_state(location_id,version,state_json,updated_by) VALUES(?,?,?,?)').run(locationId,remote.version,JSON.stringify(remote.state),'bootstrap');
+     store.db.prepare('INSERT OR REPLACE INTO locations VALUES(?,?,1)').run(locationId,remote.location.name);
+     syncRoster(store,locationId,remote.roster);store.meta('activating',remote.stateHash);
+     await cloud(hubPath,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({activate:true,version:remote.version,stateHash:remote.stateHash})});
+    }
     store.meta('active','1');active=true;
    }
    const results=[];for(const command of remote.commands){await downloadMedia(JSON.parse(command.state_json));results.push({id:command.id,response:processCommand(store,locationId,command)});}

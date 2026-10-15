@@ -73,6 +73,13 @@ test('activation rejects stale bootstrap and expired commands never apply after 
  const command={id:'expired',expected_version:1,expires_at:1,state_json:JSON.stringify(initialState())};
  assert.equal(processCommand(cloud.store,'waco',command).status,409);assert.equal(cloud.store.snapshot('waco').version,1);
 });
+test('a lost activation reply recovers only the Pi that persisted the matching bootstrap',async t=>{
+ const cloud=cloudFixture(t);let loseReply=true;
+ const app=createLocalServer({locationId:'waco',token:'secret',cloudUrl:'https://cloud.example.test',publicUrl:'https://waco.local:8443',directory:temporary(t),noTimer:true,fetch:async(url,options={})=>{const body=options.body?JSON.parse(options.body):null,response=await cloud.call(body);if(body?.activate&&loseReply){loseReply=false;throw Error('Lost activation response');}return response;}});closeAfter(t,()=>app.close());
+ await app.cycle();assert.equal(app.runtime().active,false);assert.equal(cloud.db.prepare('SELECT enabled FROM seating_hubs').get().enabled,1);
+ await app.cycle();assert.equal(app.runtime().active,true);assert.equal(app.runtime().online,true);
+ const duplicate=createLocalServer({locationId:'waco',token:'secret',cloudUrl:'https://cloud.example.test',publicUrl:'https://waco.local:8443',directory:temporary(t),noTimer:true,fetch:(url,options={})=>cloud.call(options.body?JSON.parse(options.body):null)});closeAfter(t,()=>duplicate.close());await duplicate.cycle();assert.equal(duplicate.runtime().active,false);assert.match(duplicate.runtime().lastError,/already active/);
+});
 test('local changes win a race with a cloud proposal; a stale backup cannot overwrite cloud state',async t=>{
  const cloud=cloudFixture(t),directory=temporary(t),config={locationId:'waco',token:'secret',cloudUrl:'https://cloud.example.test',publicUrl:'https://waco.local:8443',directory,noTimer:true,fetch:(url,options={})=>cloud.call(options.body?JSON.parse(options.body):null)};
  const app=createLocalServer(config);closeAfter(t,()=>app.close());await app.cycle();
