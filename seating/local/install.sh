@@ -27,6 +27,7 @@ if [ ! -x "$ROOT/web/usr/bin/caddy" ]; then
 fi
 DEST="$ROOT/releases/$VERSION"
 if [ ! -d "$DEST" ]; then install -d "$DEST"; cp -a "$SOURCE/." "$DEST/"; chown -R root:root "$DEST"; chmod -R go-w "$DEST"; fi
+chmod -R a+rX,go-w "$DEST"
 "$ROOT/node/bin/node" --check "$DEST/local/server.js"
 "$ROOT/node/bin/node" --input-type=module -e 'import {DatabaseSync} from "node:sqlite"; const d=new DatabaseSync(":memory:"); d.exec("SELECT 1"); d.close();'
 ln -sfn "$DEST" "$ROOT/current.new"; mv -Tf "$ROOT/current.new" "$ROOT/current"
