@@ -2,6 +2,7 @@ import {areaOptions,areaName,roomOptions} from './areas.js';
 import {planImage,cleanUpPlan} from './plan-cleanup.js';
 import {drawingBounds,fullPlanBox} from './plan-fit.js';
 import {readyTracker} from './ready-alert.js';
+import {connectionIndicator} from './connection-indicator.js';
 import {installApp,runtimeInfo,pairLocalServer,layoutSettings} from './device.js';
 import {roomInfo,activeRoomBlocks,scheduledRooms,walkInTables} from './rooms.js';
 import {planWaitlist,estimateNewParty,seatingOptions,waitRange} from './wait-plan.js';
@@ -18,6 +19,21 @@ let backgroundFit=null,viewFitted=true;
 let combining=false;
 let seatNowMode=false,guestAdviceKey='';
 let recoveringAccess=false;
+let lastConnectionConfirmed=0,seatingReachable=true;
+function renderConnection(){
+ const status=connectionIndicator({mode:runtime.mode,confirmedAt:lastConnectionConfirmed,reachable:seatingReachable,connection,preview:demo});
+ if(status.label.includes('Disconnected'))transportReady=false;
+ $('connection-status').dataset.tone=status.tone;$('connection-label').textContent=status.label;
+ $('connection-status').title=status.message;
+ if($('connection-dialog').open){
+  $('connection-restaurant').textContent=locations.find(l=>l.id===locationId)?.name||'No restaurant selected';
+  $('connection-message').textContent=status.message;
+  $('connection-source').textContent=demo?'Preview':runtime.mode==='local'?'Local restaurant Pi':'Cloud website';
+  $('connection-confirmed').textContent=lastConnectionConfirmed?new Date(lastConnectionConfirmed).toLocaleString():'Not yet confirmed';
+  const stamp=runtime.mode==='local'?connection?.lastCloud:connection?.lastSeen;
+  $('connection-cloud').textContent=demo?'Preview only':!seatingReachable||status.label.includes('Disconnected')?'Not confirmed':connection?.requiresRecovery?'Recovery required':connection?.mode==='local'?connection.online?`Online${stamp?' · '+new Date(stamp).toLocaleTimeString():''}`:'Offline · guest QR check-in paused':'Online';
+ }
+}
 installApp();
 const names={open:'Open',in_use:'In use',cleaning:'Cleaning',reserved:'Room held'};
 function el(tag,attrs={},text){const n=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(k==='class')n.className=v;else n.setAttribute(k,v);}if(text!==undefined)n.textContent=text;return n;}
@@ -32,6 +48,7 @@ function endpoint(resource){return `/api/locations/${encodeURIComponent(location
 function sync(ok,text){$('sync-text').textContent=text;$('sync-dot').style.background=ok?'#2e805c':'#c48a25';}
 function connectionStatus(value=connection){
  connection=value;transportReady=demo||!!state&&!value?.requiresRecovery&&!(runtime.mode!=='local'&&value?.mode==='local'&&!value.online);
+ renderConnection();
  $('network-banner').hidden=!(value?.requiresRecovery||value?.mode==='local'&&!value.online);
  $('network-banner').textContent=value?.requiresRecovery?'Data recovery required. Seating changes are paused; contact the administrator.':runtime.mode==='local'?'Internet unavailable — host check-in only. Local devices are sharing through this Pi.':'Restaurant offline — host check-in only. This is the last cloud update; seating changes are paused.';
  if(value?.requiresRecovery){sync(false,'Recovery required · changes paused');return;}
@@ -49,6 +66,7 @@ async function loadSession(){
   else data=await api('/api/session');
   profile=data.profile;locations=data.locations;
   locationId=null;version=-1;
+  lastConnectionConfirmed=0;seatingReachable=true;renderConnection();
   $('login').hidden=true;$('app').hidden=false;$('demo-banner').hidden=!demo;
   $('staff-open').hidden=!profile.system_admin;$('location').replaceChildren(...locations.map(l=>new Option(l.name,l.id)));
   $('local-server-open').hidden=demo||runtime.mode==='local'||!profile.system_admin;
@@ -81,8 +99,8 @@ async function refresh(force=false){
     connection=data.connection;transportReady=!connection?.requiresRecovery&&!(runtime.mode!=='local'&&connection?.mode==='local'&&!connection.online);
     if(force||data.version!==version||role!==data.role){state=presetCombinations(upgradeNumbering(data.state));version=data.version;role=data.role;if(force&&(state.background?.imported||state.areaConfig))viewBox=importedViewBox(view);selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
     else if(!editing){renderWait();renderSelection();renderRoomBookings();}
-    connectionStatus(data.connection);showReadyAlert();if($('guest-dialog').open)renderGuestQuote();
-  }catch(e){if(requestedLocation!==locationId)return;transportReady=false;showReadyAlert();sync(false,'Disconnected · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(e.status===403){if(recoveringAccess)throw e;await recoverLocationAccess();}else if(force)toast(e.message,true);}
+    lastConnectionConfirmed=Date.now();seatingReachable=true;connectionStatus(data.connection);showReadyAlert();if($('guest-dialog').open)renderGuestQuote();
+  }catch(e){if(requestedLocation!==locationId)return;transportReady=false;seatingReachable=false;renderConnection();showReadyAlert();sync(false,'Disconnected · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(e.status===403){if(recoveringAccess)throw e;await recoverLocationAccess();}else if(force)toast(e.message,true);}
 }
 async function act(action){
   if(busy||!transportReady){if(!busy)toast('Reconnect to the restaurant before making changes.',true);return false;}busy=true;$('location').disabled=true;sync(false,'Saving…');
@@ -92,7 +110,7 @@ async function act(action){
     if(action.type==='seat'||action.type==='seatNow'||action.type==='cancelParty')partyId=null;
     selected=new Set([...selected].filter(id=>!releasedTables.includes(id)&&state.tables.some(t=>t.id===id)));
     if(['status','seat','seatNow','combine'].includes(action.type)){selected.clear();combining=false;closeSidebar();}
-    render();connectionStatus();showReadyAlert();return true;
+    lastConnectionConfirmed=Date.now();seatingReachable=true;render();connectionStatus();showReadyAlert();return true;
   }catch(e){toast(e.message,true);sync(false,'Change not saved');if(e.status===409){busy=false;await refresh(true);}if(e.status===401){$('app').hidden=true;$('login').hidden=false;}if(e.status===403){busy=false;await recoverLocationAccess();}return false;}finally{busy=false;$('location').disabled=false;}
 }
 function current(){return state.tables.filter(t=>selected.has(t.id));}
@@ -410,9 +428,10 @@ $('staff-open').onclick=async()=>{
 };
 $('demo-reset').onclick=()=>{localStorage.removeItem('seating-preview');selected.clear();partyId=null;refresh(true);};
 let nextFloorRefresh=0;
-setInterval(()=>{if(!document.hidden&&locationId&&!editing&&Date.now()>=nextFloorRefresh){nextFloorRefresh=Date.now()+(runtime.mode==='local'?5000:10000);refresh();}},1000);
+setInterval(()=>{if(document.hidden)return;renderConnection();if(locationId&&Date.now()>=nextFloorRefresh){nextFloorRefresh=Date.now()+(runtime.mode==='local'?5000:10000);refresh();}},1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh(true);});
-window.addEventListener('online',()=>refresh(true));window.addEventListener('offline',()=>{transportReady=false;showReadyAlert();sync(false,'Disconnected · changes unavailable');});
+window.addEventListener('online',()=>refresh(true));window.addEventListener('offline',()=>{transportReady=false;seatingReachable=false;renderConnection();showReadyAlert();sync(false,'Disconnected · changes unavailable');});
+$('connection-status').onclick=()=>{$('connection-dialog').showModal();renderConnection();};
 async function boot(){runtime=demo?{mode:'cloud'}:await runtimeInfo();const local=runtime.mode==='local';$('local-pin-label').hidden=!local;$('cloud-email-label').hidden=local;$('cloud-password-label').hidden=local;$('email').required=!local;$('password').required=!local;$('local-pin').required=local;$('pin-enroll-open').hidden=!local;$('login-copy').textContent=local?'On the restaurant Wi-Fi, enter your four-digit employee PIN.':'Sign in with your Kiosk Manager account.';await loadSession();}
 boot().catch(e=>{if(e.status!==401)toast(e.message,true);});
 $('ready-ack').onclick=()=>{alerts.acknowledge(currentPlan().rows);showReadyAlert();};
