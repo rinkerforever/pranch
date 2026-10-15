@@ -64,8 +64,23 @@ http://:8081 {
 }
 EOF
 fi
+if ! grep -q '/seating.mobileconfig' /etc/pizza-ranch-seating/Caddyfile; then
+  python3 - <<'PY'
+from pathlib import Path
+path=Path('/etc/pizza-ranch-seating/Caddyfile')
+text=path.read_text()
+marker='  handle /seating-root.crt {'
+if marker not in text: raise SystemExit('Certificate route missing; review the local HTTPS configuration')
+route='  handle /seating.mobileconfig {\n    rewrite * /public/seating.mobileconfig\n    root * /var/lib/pizza-ranch-seating-web\n    header Content-Type application/x-apple-aspen-config\n    file_server\n  }\n'
+path.write_text(text.replace(marker,route+marker,1))
+PY
+fi
 chown -R pr-seating-web:pr-seating-web /var/lib/pizza-ranch-seating-web
 runuser -u pr-seating-web -- env HOME=/var/lib/pizza-ranch-seating-web "$ROOT/web/usr/bin/caddy" validate --config /etc/pizza-ranch-seating/Caddyfile --adapter caddyfile
+install -d -m 755 -o pr-seating-web -g pr-seating-web /var/lib/pizza-ranch-seating-web/public
+python3 "$DEST/local/make-profile.py" /var/lib/pizza-ranch-seating-web/pki/authorities/local/root.crt /var/lib/pizza-ranch-seating-web/public/seating.mobileconfig
+chown pr-seating-web:pr-seating-web /var/lib/pizza-ranch-seating-web/public/seating.mobileconfig
+chmod 644 /var/lib/pizza-ranch-seating-web/public/seating.mobileconfig
 systemctl daemon-reload
 systemctl enable pizza-ranch-seating.service pizza-ranch-seating-web.service pizza-ranch-seating-update.timer
 systemctl restart pizza-ranch-seating-web.service

@@ -24,7 +24,7 @@ On the Pi, download both files from the fixed repository release, verify the arc
 
 ## Prepare each iPad
 
-1. Connect to staff Wi-Fi. In Safari visit `http://192.168.50.18:8081/seating-root.crt` and download the seating certificate profile.
+1. Connect to staff Wi-Fi. In Safari visit `http://192.168.50.18:8081/seating.mobileconfig` and download the seating certificate profile. It contains only the Pi's public root certificate and does not enroll the iPad in device management.
 2. The device owner installs the profile in **Settings > General > VPN & Device Management**, then enables trust for the seating root in **Settings > General > About > Certificate Trust Settings**. This is a deliberate trust change; do it only for this restaurant's Pi. Do not bypass Safari certificate warnings.
 3. Open `https://pizzaranchdisplay.local:8443`. Choose **Set or renew my local PIN** and verify the employee's Kiosk Manager email/password online. Choose a unique 4-digit PIN. Passwords are used for verification and are not stored on the Pi.
 4. Sign in with that PIN. In Safari choose **Share > Add to Home Screen**, enable **Open as Web App** if shown, and name it **PR Seating**.
