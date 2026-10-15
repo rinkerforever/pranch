@@ -1,5 +1,7 @@
 import {areaOptions,areaName,roomOptions} from './areas.js';
 import {planImage,cleanUpPlan} from './plan-cleanup.js';
+import {readyTracker} from './ready-alert.js';
+import {installApp,runtimeInfo,pairLocalServer} from './device.js';
 import {roomInfo,activeRoomBlocks,scheduledRooms,walkInTables} from './rooms.js';
 import {planWaitlist,estimateNewParty,waitRange} from './wait-plan.js';
 import {presetCombinations,includesBoothCombination,childBoothFit} from './combinations.js';
@@ -9,6 +11,8 @@ const $=id=>document.getElementById(id), NS='http://www.w3.org/2000/svg';
 const demo=new URLSearchParams(location.search).get('demo')==='1';
 let state=null,version=0,profile=null,locations=[],locationId=null,role='viewer',selected=new Set(),partyId=null,editing=false,tableDraft=null,editGuest=null,busy=false,view='Dining',viewBox=[140,550,1495,360],toastTimer,uploadBusy=false;
 let demoModel;
+let runtime={mode:'cloud'},transportReady=false,connection=null,alerts=readyTracker();
+installApp();
 const names={open:'Open',in_use:'In use',cleaning:'Cleaning',reserved:'Room held'};
 function el(tag,attrs={},text){const n=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(k==='class')n.className=v;else n.setAttribute(k,v);}if(text!==undefined)n.textContent=text;return n;}
 function svg(tag,attrs={},text){const n=document.createElementNS(NS,tag);for(const[k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text!==undefined)n.textContent=text;return n;}
@@ -20,6 +24,19 @@ async function api(path,options={}){
 }
 function endpoint(resource){return `/api/locations/${encodeURIComponent(locationId)}/${resource}`;}
 function sync(ok,text){$('sync-text').textContent=text;$('sync-dot').style.background=ok?'#2e805c':'#c48a25';}
+function connectionStatus(value=connection){
+ connection=value;transportReady=demo||!!state&&!value?.requiresRecovery&&!(runtime.mode!=='local'&&value?.mode==='local'&&!value.online);
+ $('network-banner').hidden=!(value?.requiresRecovery||value?.mode==='local'&&!value.online);
+ $('network-banner').textContent=value?.requiresRecovery?'Data recovery required. Seating changes are paused; contact the administrator.':runtime.mode==='local'?'Internet unavailable — host check-in only. Local devices are sharing through this Pi.':'Restaurant offline — host check-in only. This is the last cloud update; seating changes are paused.';
+ if(value?.requiresRecovery){sync(false,'Recovery required · changes paused');return;}
+ sync(transportReady,demo?'Preview · local changes':runtime.mode==='local'?(value?.online?'Saved · local + cloud':'Saved on Pi · host check-in only'):value?.mode==='local'?'Saved · sharing through restaurant Pi':'Saved · sharing live');
+}
+function showReadyAlert(){
+ if(!transportReady||!state||editing){$('ready-banner').hidden=true;document.body.classList.remove('table-ready');return;}
+ const pending=alerts.update(currentPlan().rows),first=pending[0];
+ $('ready-banner').hidden=!first;document.body.classList.toggle('table-ready',!!first);
+ if(first)$('ready-message').textContent=`Table ready — ${first.party.name}, party of ${first.party.size} · ${first.estimate.tables.map(label).join(' + ')}${pending.length>1?` · ${pending.length} parties ready`:''}`;
+}
 async function loadSession(){
   let data;
   if(demo){demoModel=await import('./model.js');profile={display_name:'Preview manager',system_admin:true};locations=[{id:'preview',name:'Pizza Ranch · Preview',role:'admin'}];data={profile,locations};}
@@ -27,6 +44,8 @@ async function loadSession(){
   profile=data.profile;locations=data.locations;
   $('login').hidden=true;$('app').hidden=false;$('demo-banner').hidden=!demo;
   $('staff-open').hidden=!profile.system_admin;$('location').replaceChildren(...locations.map(l=>new Option(l.name,l.id)));
+  $('local-server-open').hidden=demo||runtime.mode==='local'||!profile.system_admin;
+  $('logout').textContent=runtime.mode==='local'?'Lock / switch employee':'Sign out';
   $('no-access').hidden=locations.length>0;$('workspace').hidden=!locations.length;
   if(locations.length){if(matchMedia('(max-width:599px)').matches)setView('C');locationId=locations[0].id;role=locations[0].role;await refresh(true);}
 }
@@ -41,23 +60,24 @@ async function refresh(force=false){
   try{
     const data=demo?{state:JSON.parse(localStorage.getItem('seating-preview')||'null')||demoInitial(),version:version+1,role:'admin'}:await api(endpoint('state'));
     if(requestedLocation!==locationId||data.version<version)return;
+    connection=data.connection;transportReady=!connection?.requiresRecovery&&!(runtime.mode!=='local'&&connection?.mode==='local'&&!connection.online);
     if(force||data.version!==version||role!==data.role){state=presetCombinations(upgradeNumbering(data.state));version=data.version;role=data.role;if(force&&(state.background?.imported||state.areaConfig))viewBox=importedViewBox(view);selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
     else if(!editing){renderWait();renderSelection();renderRoomBookings();}
-    sync(true,demo?'Preview · local changes':'Saved · sharing live');
-  }catch(e){sync(false,'Offline · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(force)toast(e.message,true);}
+    connectionStatus(data.connection);showReadyAlert();
+  }catch(e){transportReady=false;showReadyAlert();sync(false,'Disconnected · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(force)toast(e.message,true);}
 }
 async function act(action){
-  if(busy)return false;busy=true;$('location').disabled=true;sync(false,'Saving…');
+  if(busy||!transportReady){if(!busy)toast('Reconnect to the restaurant before making changes.',true);return false;}busy=true;$('location').disabled=true;sync(false,'Saving…');
   const releasedTables=action.type==='releaseRoom'?state.tables.filter(t=>t.roomBlock===action.id).map(t=>t.id):[];
-  try{const data=demo?{state:demoModel.applyAction(state,action,role),version:version+1}:await api(endpoint('actions'),{method:'POST',body:JSON.stringify({version,action})});
+  try{const data=demo?{state:demoModel.applyAction(state,action,role),version:version+1}:await api(endpoint('actions'),{method:'POST',headers:{'x-request-id':crypto.randomUUID()},body:JSON.stringify({version,action})});
     state=presetCombinations(upgradeNumbering(data.state));version=data.version;if(demo)localStorage.setItem('seating-preview',JSON.stringify(state));
     if(action.type==='seat'||action.type==='cancelParty')partyId=null;
-    selected=new Set([...selected].filter(id=>!releasedTables.includes(id)&&state.tables.some(t=>t.id===id)));render();sync(true,demo?'Preview · local changes':'Saved · sharing live');return true;
+    selected=new Set([...selected].filter(id=>!releasedTables.includes(id)&&state.tables.some(t=>t.id===id)));render();connectionStatus();showReadyAlert();return true;
   }catch(e){toast(e.message,true);sync(false,'Change not saved');if(e.status===409){busy=false;await refresh(true);}if(e.status===401){$('app').hidden=true;$('login').hidden=false;}return false;}finally{busy=false;$('location').disabled=false;}
 }
 function current(){return state.tables.filter(t=>selected.has(t.id));}
-function canWrite(){return ['admin','manager','host'].includes(role);}
-function canEdit(){return ['admin','manager'].includes(role);}
+function canWrite(){return transportReady&&['admin','manager','host'].includes(role);}
+function canEdit(){return transportReady&&['admin','manager'].includes(role);}
 function label(t){return /^[A-Z]+\d/i.test(t.number)?t.number:`${areaName(state,t.area)}-${t.number}`;}
 function minutes(stamp){return Math.max(0,Math.floor((Date.now()-stamp)/60000));}
 function groupTables(t){return t.group?state.tables.filter(o=>o.group===t.group):[t];}
@@ -238,13 +258,13 @@ function render(){
   $('edit-tab').hidden=!canEdit();if(!canEdit())editing=false;$('tablet-wait').hidden=editing;
   $('live-tab').classList.toggle('active',!editing);$('edit-tab').classList.toggle('active',editing);$('editor-toolbar').hidden=!editing;$('wait-panel').hidden=editing;$('selection-panel').hidden=editing;$('layout-panel').hidden=!editing||!tableDraft;
   $('page-title').textContent=editing?'Make the floor yours.':'Let’s get everyone seated.';
-  renderAreas();renderFloor();renderWait();renderSelection();renderRecommendations();renderRoomBookings();
+  renderAreas();renderFloor();renderWait();renderSelection();renderRecommendations();renderRoomBookings();showReadyAlert();
   // Keep unsaved layout fields intact while live state polls update the floor.
 }
 function openGuest(p=null){editGuest=p?.id||null;$('guest-title').textContent=p?'Edit waiting party':'Add guests';$('guest-name').value=p?.name||'';$('guest-size').value=p?.size||2;$('guest-notes').value=p?.notes||'';$('guest-highchair').checked=!!p?.highChair;$('guest-booster').checked=!!p?.booster;renderGuestQuote();$('guest-dialog').showModal();$('guest-name').focus();}
-$('login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;$('login-error').textContent='';try{await api('/api/login',{method:'POST',body:JSON.stringify({email:$('email').value,password:$('password').value})});$('password').value='';await loadSession();}catch(error){$('login-error').textContent=error.message;}finally{b.disabled=false;}};
-$('logout').onclick=async()=>{if(!demo)await api('/api/logout',{method:'POST'});locationId=null;state=null;$('app').hidden=true;$('login').hidden=false;if(demo)location.href='/';};
-$('location').onchange=async()=>{locationId=$('location').value;role=locations.find(l=>l.id===locationId).role;selected.clear();partyId=null;tableDraft=null;editing=false;version=-1;await refresh(true);};
+$('login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;$('login-error').textContent='';try{await api('/api/login',{method:'POST',body:JSON.stringify(runtime.mode==='local'?{pin:$('local-pin').value}:{email:$('email').value,password:$('password').value})});$('password').value='';$('local-pin').value='';await loadSession();}catch(error){$('login-error').textContent=error.message;}finally{b.disabled=false;}};
+$('logout').onclick=async()=>{if(!demo)await api('/api/logout',{method:'POST'});locationId=null;state=null;transportReady=false;alerts=readyTracker();showReadyAlert();$('app').hidden=true;$('login').hidden=false;if(demo)location.href='/';};
+$('location').onchange=async()=>{locationId=$('location').value;role=locations.find(l=>l.id===locationId).role;selected.clear();partyId=null;tableDraft=null;editing=false;version=-1;alerts=readyTracker();await refresh(true);};
 $('live-tab').onclick=()=>{$('app').classList.remove('phone-menu-open');closeSidebar();editing=false;tableDraft=null;render();};$('edit-tab').onclick=()=>{$('app').classList.remove('phone-menu-open');closeSidebar();editing=true;partyId=null;tableDraft=null;selected.clear();render();toast('Select a table to edit its capacity, chairs, or allowed combinations.');};
 $('phone-floor').onclick=closeSidebar;$('phone-wait').onclick=()=>{editing=false;render();showSidebar('waiting');};$('phone-more').onclick=()=>{const open=$('app').classList.toggle('phone-menu-open');$('phone-more').setAttribute('aria-expanded',open);};
 $('tablet-wait').onclick=()=>showSidebar('waiting');$('tablet-details').onclick=()=>showSidebar('details');$('sidebar-close').onclick=closeSidebar;
@@ -300,15 +320,20 @@ $('staff-open').onclick=async()=>{
 $('demo-reset').onclick=()=>{localStorage.removeItem('seating-preview');selected.clear();partyId=null;refresh(true);};
 setInterval(()=>{if(!document.hidden&&locationId&&!editing)refresh();},5000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh(true);});
-window.addEventListener('online',()=>refresh(true));window.addEventListener('offline',()=>sync(false,'Offline · changes unavailable'));
-loadSession().catch(e=>{if(e.status!==401)toast(e.message,true);});
+window.addEventListener('online',()=>refresh(true));window.addEventListener('offline',()=>{transportReady=false;showReadyAlert();sync(false,'Disconnected · changes unavailable');});
+async function boot(){runtime=demo?{mode:'cloud'}:await runtimeInfo();const local=runtime.mode==='local';$('local-pin-label').hidden=!local;$('cloud-email-label').hidden=local;$('cloud-password-label').hidden=local;$('email').required=!local;$('password').required=!local;$('local-pin').required=local;$('pin-enroll-open').hidden=!local;$('login-copy').textContent=local?'On the restaurant Wi-Fi, enter your four-digit employee PIN.':'Sign in with your Kiosk Manager account.';await loadSession();}
+boot().catch(e=>{if(e.status!==401)toast(e.message,true);});
+$('ready-ack').onclick=()=>{alerts.acknowledge(currentPlan().rows);showReadyAlert();};
+$('local-server-open').onclick=()=>pairLocalServer({locationId,api}).catch(e=>toast(e.message,true));
+$('pin-enroll-open').onclick=()=>$('pin-enroll-dialog').showModal();
+$('pin-enroll-form').onsubmit=async e=>{e.preventDefault();e.submitter.disabled=true;try{await api('/api/local/enroll',{method:'POST',body:JSON.stringify({email:$('pin-email').value,password:$('pin-password').value,pin:$('pin-new').value})});$('pin-password').value='';$('pin-new').value='';$('pin-enroll-dialog').close();toast('PIN saved. Sign in with your four-digit PIN.');}catch(error){$('pin-error').textContent=error.message;}finally{e.submitter.disabled=false;}};
 
 $('guest-checkin').onclick=()=>{
  const loc=locations.find(l=>l.id===locationId),config=state.guestSettings||{enabled:false,maxPartySize:12};
  $('checkin-location').textContent=loc.name;$('checkin-summary').textContent=config.enabled?'Guests can join online now.':'Online check-in is currently closed.';
  $('checkin-enabled').checked=config.enabled;$('checkin-max').value=config.maxPartySize;
  $('checkin-code').hidden=demo;
- if(!demo){$('checkin-qr').src=endpoint('qr');$('checkin-link').href=`/join.html?location=${encodeURIComponent(locationId)}`;$('checkin-print').href=`/sign.html?location=${encodeURIComponent(locationId)}`;}
+ if(!demo){$('checkin-qr').src=endpoint('qr');$('checkin-link').href=`${runtime.cloudUrl||''}/join.html?location=${encodeURIComponent(locationId)}`;$('checkin-print').href=`/sign.html?location=${encodeURIComponent(locationId)}`;}
  $('checkin-dialog').showModal();
 };
 $('checkin-form').onsubmit=async e=>{e.preventDefault();const button=$('checkin-save');button.disabled=true;try{if(await act({type:'guestSettings',enabled:$('checkin-enabled').checked,maxPartySize:Number($('checkin-max').value)})){$('checkin-summary').textContent=state.guestSettings.enabled?'Guests can join online now.':'Online check-in is closed. Existing guests can still check their status.';toast('Guest check-in settings saved.');}}finally{button.disabled=false;}};

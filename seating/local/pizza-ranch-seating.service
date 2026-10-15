@@ -1,0 +1,22 @@
+[Unit]
+Description=Pizza Ranch local seating server
+After=network.target
+ConditionPathExists=/etc/pizza-ranch-seating/seating.env
+
+[Service]
+User=pr-seating
+Group=pr-seating
+WorkingDirectory=/opt/pizza-ranch-seating/current
+EnvironmentFile=/etc/pizza-ranch-seating/seating.env
+ExecStart=/opt/pizza-ranch-seating/node/bin/node local/server.js
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pizza-ranch-seating
+
+[Install]
+WantedBy=multi-user.target

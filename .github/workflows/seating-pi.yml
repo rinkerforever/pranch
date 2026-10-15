@@ -1,0 +1,32 @@
+name: Build seating Pi update
+on:
+  push:
+    branches: [main]
+    paths: ['seating/**', '.github/workflows/seating-pi.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: seating-pi-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare and verify app
+        working-directory: seating
+        run: |
+          npm install --ignore-scripts
+          node scripts/prepare-assets.js
+          node --test tests/*.test.js
+          node scripts/package-pi.mjs
+      - name: Publish Pi update package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view seating-pi-latest || gh release create seating-pi-latest --title "Seating Pi updates" --notes "Verified automatic updates for the local seating service. Restaurant data stays on the Pi." --prerelease --latest=false
+          gh release upload seating-pi-latest seating/dist/seating-pi.tar.gz seating/dist/seating-pi.json --clobber

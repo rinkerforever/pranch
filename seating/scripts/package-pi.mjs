@@ -1,0 +1,15 @@
+import {cp,mkdir,readFile,writeFile,realpath} from 'node:fs/promises';
+import {resolve,join} from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+const base=process.cwd(),out=resolve(base,'dist'),stage=join(out,'package');
+await mkdir(stage,{recursive:true});
+for(const folder of ['public','src','local','migrations'])await cp(join(base,folder),join(stage,folder),{recursive:true});
+await mkdir(join(stage,'node_modules'),{recursive:true});
+await cp(await realpath(join(base,'node_modules/qrcode-generator')),join(stage,'node_modules/qrcode-generator'),{recursive:true,dereference:true});
+await writeFile(join(stage,'package.json'),JSON.stringify({name:'pizza-ranch-seating-runtime',type:'module',private:true}));
+const version=process.env.GITHUB_SHA||execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();if(!/^[a-f0-9]{40}$/.test(version))throw Error('Use a full Git commit SHA for the release.');
+await writeFile(join(stage,'VERSION'),version+'\n');
+const archive=join(out,'seating-pi.tar.gz');execFileSync('tar',['-czf',archive,'-C',stage,'.']);
+await writeFile(join(out,'seating-pi.json'),JSON.stringify({version,sha256:createHash('sha256').update(await readFile(archive)).digest('hex')})+'\n');
+console.log('Pi release package created for '+version);

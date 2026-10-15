@@ -3,6 +3,7 @@ import {guestApi} from './guest.js';
 import qrcode from 'qrcode-generator';
 import { upgradeNumbering } from '../public/floor.js';
 import { initialState, applyAction, AppError } from './model.js';
+import {hubApi,hubRow,hubStatus,configureHub,relaySave} from './hub.js';
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
 const cookie=(name,value,age)=>`${name}=${encodeURIComponent(value)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${age}`;
 function cookies(request){return Object.fromEntries((request.headers.get('cookie')||'').split(';').map(v=>{const i=v.indexOf('=');return [v.slice(0,i).trim(),decodeURIComponent(v.slice(i+1))];}));}
@@ -14,6 +15,7 @@ const secureHeaders={
 async function authFetch(env,path,body,token){return fetch(`${env.SUPABASE_URL}/auth/v1/${path}`,{method:body?'POST':'GET',headers:{apikey:env.SUPABASE_PUBLISHABLE_KEY,...(token?{authorization:`Bearer ${token}`} : {}),...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});}
 function setSession(ctx,data){ctx.cookies.push(cookie('seat_access',data.access_token,data.expires_in||3600),cookie('seat_refresh',data.refresh_token,604800));}
 async function identity(request,env,ctx){
+  if(env.localIdentity)return env.localIdentity(request);
   const c=cookies(request);let user=null;
   if(c.seat_access){const r=await authFetch(env,'user',null,c.seat_access);if(r.ok)user=await r.json();}
   if(!user&&c.seat_refresh){const r=await authFetch(env,'token?grant_type=refresh_token',{refresh_token:c.seat_refresh});if(r.ok){const data=await r.json();user=data.user;setSession(ctx,data);}}
@@ -37,13 +39,15 @@ async function loadState(env,id,profile){
   await env.DB.prepare('INSERT OR IGNORE INTO seating_state(location_id,version,state_json,updated_by) VALUES(?,0,?,?)').bind(id,JSON.stringify(initialState()),profile.id).run();
   return env.DB.prepare('SELECT version,state_json,updated_at FROM seating_state WHERE location_id=?').bind(id).first();
 }
-async function saveState(env,id,row,state,profile){
-  const r=await env.DB.prepare("UPDATE seating_state SET state_json=?,version=version+1,updated_by=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE location_id=? AND version=?")
-    .bind(JSON.stringify(state),profile.id,id,row.version).run();
+async function saveState(env,id,row,state,profile,requestId){
+  if(!env.localIdentity){const relayed=await relaySave(env,id,row.version,state,requestId);if(relayed)return relayed;}
+  const r=await env.DB.prepare("UPDATE seating_state SET state_json=?,version=version+1,updated_by=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE location_id=? AND version=? AND NOT EXISTS(SELECT 1 FROM seating_hubs WHERE location_id=? AND enabled=1)")
+    .bind(JSON.stringify(state),profile.id,id,row.version,id).run();
   if(r.meta.changes!==1)throw new AppError('Another host updated this floor. The latest changes have been loaded; please try your action again.',409);
   return json({state,version:row.version+1});
 }
 async function api(request,env,ctx,url){
+  if(url.pathname.startsWith('/api/hub/'))return hubApi(request,env,url);
   if(!['GET','HEAD'].includes(request.method)&&request.headers.get('origin')!==url.origin)throw new AppError('Request origin is not allowed.',403);
   if(url.pathname==='/api/health')return json({ok:true,service:'pizza-ranch-seating',version:'1.0.0'});
   if(url.pathname==='/api/login'&&request.method==='POST'){
@@ -58,13 +62,15 @@ async function api(request,env,ctx,url){
   if(url.pathname==='/api/logout'&&request.method==='POST'){
     ctx.cookies.push(cookie('seat_access','',0),cookie('seat_refresh','',0));return json({ok:true});
   }
-  if(url.pathname.startsWith('/api/guest/'))return guestApi(request,env,ctx,url,{json,readBody,cookies});
+  if(url.pathname==='/api/runtime')return json(env.localRuntime?env.localRuntime():{mode:'cloud'});
+  if(url.pathname.startsWith('/api/guest/'))return guestApi(request,env,ctx,url,{json,readBody,cookies,saveState:(id,row,state,requestId)=>saveState(env,id,row,state,{id:'guest-check-in'},requestId)});
   const profile=await identity(request,env,ctx);
   if(url.pathname==='/api/session'){
     const rows=profile.system_admin?await env.DB.prepare("SELECT id,name,'admin' AS role FROM locations WHERE active=1 ORDER BY name").all():await env.DB.prepare('SELECT l.id,l.name,g.role FROM locations l JOIN seating_grants g ON g.location_id=l.id WHERE l.active=1 AND g.user_id=? ORDER BY l.name').bind(profile.id).all();
     return json({profile,locations:rows.results});
   }
   if(url.pathname==='/api/staff'){
+    if(env.localIdentity&&request.method!=='GET')throw new AppError('Manage account access through the cloud site.',403);
     if(!profile.system_admin)throw new AppError('System administrator access required.',403);
     if(request.method==='GET'){
       const users=await env.DB.prepare('SELECT id,email,display_name,system_admin FROM user_profiles WHERE active=1 ORDER BY display_name').all();
@@ -78,9 +84,10 @@ async function api(request,env,ctx,url){
       return json({ok:true});
     }
   }
-  const match=url.pathname.match(/^\/api\/locations\/([^/]+)\/(state|actions|floorplan|qr)$/);
+  const match=url.pathname.match(/^\/api\/locations\/([^/]+)\/(state|actions|floorplan|qr|hub)$/);
   if(!match)throw new AppError('Not found.',404);
   const id=decodeURIComponent(match[1]),resource=match[2],role=await roleFor(env,profile,id);
+  if(resource==='hub'){if(env.localIdentity)throw new AppError('Pair local servers from the cloud site.',403);return configureHub(request,env,id,profile);}
   if(resource==='floorplan'&&request.method==='GET'){
     const row=await loadState(env,id,profile),state=JSON.parse(row.state_json);
     if(!state.background)throw new AppError('No uploaded floor plan.',404);
@@ -88,15 +95,15 @@ async function api(request,env,ctx,url){
     return new Response(object.body,{headers:{'content-type':state.background.mime,'cache-control':'private, no-store'}});
   }
   if(resource==='qr'&&request.method==='GET'){
-    const code=qrcode(0,'M');code.addData(`${url.origin}/join.html?location=${encodeURIComponent(id)}`);code.make();
+    const code=qrcode(0,'M');code.addData(`${env.publicCloudUrl||url.origin}/join.html?location=${encodeURIComponent(id)}`);code.make();
     return new Response(code.createSvgTag({cellSize:6,margin:24,scalable:true}),{headers:{'content-type':'image/svg+xml','cache-control':'private, no-store'}});
   }
   const row=await loadState(env,id,profile);
-  if(resource==='state'&&request.method==='GET')return json({state:JSON.parse(row.state_json),version:row.version,role});
+  if(resource==='state'&&request.method==='GET')return json({state:JSON.parse(row.state_json),version:row.version,role,connection:env.localRuntime?env.localRuntime():hubStatus(await hubRow(env,id))});
   if(resource==='actions'&&request.method==='POST'){
     const body=await readBody(request);if(body.version!==row.version)throw new AppError('Another host updated this floor. The latest changes have been loaded; please try your action again.',409);
     if(['background','replaceFloor'].includes(body.action?.type))throw new AppError('Use the floor plan upload.');
-    const state=applyAction(JSON.parse(row.state_json),body.action||{},role);return saveState(env,id,row,state,profile);
+    const state=applyAction(JSON.parse(row.state_json),body.action||{},role);return saveState(env,id,row,state,profile,request.headers.get('x-request-id'));
   }
   if(resource==='floorplan'&&request.method==='POST'){
     if(!['admin','manager'].includes(role))throw new AppError('Manager access required.',403);
@@ -119,7 +126,7 @@ async function api(request,env,ctx,url){
     const old=JSON.parse(row.state_json).background;
     const state=applyAction(JSON.parse(row.state_json),{type:imported?'replaceFloor':'background',tables:imported?.tables,background:{key,mime:type,name:cleanFilename(name),...(imported?{imported:true,page:Math.max(1,Math.min(10000,Number(imported.page)||1))}:{})}},role);
     await env.MEDIA.put(key,bytes,{httpMetadata:{contentType:type}});
-    try{const response=await saveState(env,id,row,state,profile);if(old?.key)ctx.waitUntil(env.MEDIA.delete(old.key));return response;}catch(error){await env.MEDIA.delete(key);throw error;}
+    try{const response=await saveState(env,id,row,state,profile);if(old?.key)ctx.waitUntil(env.MEDIA.delete(old.key));return response;}catch(error){if(error.status!==503)await env.MEDIA.delete(key);throw error;}
   }
   throw new AppError('Method not allowed.',405);
 }

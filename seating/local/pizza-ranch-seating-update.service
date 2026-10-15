@@ -1,0 +1,10 @@
+[Unit]
+Description=Check GitHub for a verified seating update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock /run/lock/pizza-ranch-seating-update.lock /usr/bin/python3 /opt/pizza-ranch-seating/current/local/update.py
+TimeoutStartSec=20min
+UMask=0077
