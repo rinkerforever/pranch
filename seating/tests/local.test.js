@@ -104,3 +104,9 @@ test('public QR check-in is closed by the server when the enabled hub is stale',
 test('ready alerts stop after acknowledgment, rearm only after availability changes, and include new parties',()=>{
  const tracker=readyTracker(),row=(id,ready)=>({party:{id},estimate:{ready}});assert.equal(tracker.update([row('a',true)]).length,1);tracker.acknowledge([row('a',true)]);assert.equal(tracker.update([row('a',true)]).length,0);assert.equal(tracker.update([row('a',true),row('b',true)]).length,1);tracker.update([row('a',false)]);assert.equal(tracker.update([row('a',true)]).length,1);
 });
+test('unchanged staff polls avoid disk writes but changed permissions revoke access immediately',t=>{
+ const store=openStore(temporary(t));closeAfter(t,()=>store.close());const roster=[{id:'h',auth_user_id:'h',email:'h@example.test',display_name:'Host',system_admin:0,role:'host'}];
+ syncRoster(store,'waco',roster,100000);const before=store.db.prepare('SELECT total_changes() AS n').get().n;
+ syncRoster(store,'waco',roster,101000);assert.equal(store.db.prepare('SELECT total_changes() AS n').get().n,before);
+ syncRoster(store,'waco',[],102000);assert.equal(store.db.prepare('SELECT active FROM user_profiles WHERE id=?').get('h').active,0);
+});

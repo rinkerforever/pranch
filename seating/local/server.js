@@ -49,6 +49,7 @@ export function createLocalServer(config){
    const snapshot=store.snapshot(locationId);await uploadMedia(snapshot.state);
    await cloud(hubPath,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...snapshot,results})});
    lastCloud=Date.now();lastError='';
+   if(lastCloud-Number(store.meta('receiptCleanup')||0)>3600000){store.db.prepare('DELETE FROM local_receipts WHERE created_at<?').run(lastCloud-2*86400000);store.meta('receiptCleanup',lastCloud);}
   }catch(e){lastError=e.message;}finally{cycling=false;}
  }
  const runtime=()=>({mode:'local',online:Date.now()-lastCloud<10000,lastCloud,lastError,active,requiresRecovery:recovery,localUrl:origin,cloudUrl});

@@ -69,7 +69,7 @@ export async function hubApi(request,env,url){
   if(!Number.isSafeInteger(body.version)||body.version<row.version||!body.state||!Array.isArray(body.state.tables)||!Array.isArray(body.state.parties)||!Array.isArray(body.results)||body.results.length>20)throw new AppError('Local data is older than the cloud or malformed. Administrator recovery is required.',409);
   const snapshot=JSON.stringify(body.state);
   if(body.version===row.version&&snapshot!==row.state_json)throw new AppError('State differs at the same version. Administrator recovery is required.',409);
-  await env.DB.prepare("UPDATE seating_state SET state_json=?,version=?,updated_by='local-server',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE location_id=? AND version<=?").bind(snapshot,body.version,id,body.version).run();
+  if(body.version>row.version)await env.DB.prepare("UPDATE seating_state SET state_json=?,version=?,updated_by='local-server',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE location_id=? AND version<?").bind(snapshot,body.version,id,body.version).run();
   for(const result of body.results){
    if(typeof result.id!=='string'||!result.response||JSON.stringify(result.response).length>2*1024*1024)throw new AppError('Invalid command result.');
    await env.DB.prepare("UPDATE seating_commands SET status='completed',response_json=? WHERE id=? AND location_id=?").bind(JSON.stringify(result.response),result.id,id).run();

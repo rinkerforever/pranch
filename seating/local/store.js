@@ -20,11 +20,13 @@ export function openStore(directory){
  return {db,adapter,meta(key,value){if(value!==undefined)db.prepare('INSERT OR REPLACE INTO local_meta VALUES(?,?)').run(key,String(value));return db.prepare('SELECT value FROM local_meta WHERE key=?').get(key)?.value;},snapshot(id){const r=db.prepare('SELECT version,state_json FROM seating_state WHERE location_id=?').get(id);return r?{version:r.version,state:JSON.parse(r.state_json)}:null;},close:()=>db.close()};
 }
 export function syncRoster(store,id,roster,now=Date.now()){
+ const fingerprint=hash(JSON.stringify(roster));
+ if(store.meta('rosterHash')===fingerprint){if(now-Number(store.meta('rosterAt')||0)>=60000)store.meta('rosterAt',now);return;}
  const db=store.db;db.exec('BEGIN IMMEDIATE');try{
   db.prepare('UPDATE user_profiles SET active=0').run();db.prepare('DELETE FROM seating_grants WHERE location_id=?').run(id);
   for(const user of roster){db.prepare('INSERT OR REPLACE INTO user_profiles VALUES(?,?,?,?,?,1)').run(user.id,user.auth_user_id,user.email,user.display_name,user.system_admin?1:0);if(!user.system_admin)db.prepare('INSERT INTO seating_grants VALUES(?,?,?)').run(user.id,id,user.role);}
   db.prepare('DELETE FROM local_sessions WHERE expires_at<? OR user_id IN(SELECT id FROM user_profiles WHERE active=0)').run(now);
-  store.meta('rosterAt',now);db.exec('COMMIT');
+  store.meta('rosterAt',now);store.meta('rosterHash',fingerprint);db.exec('COMMIT');
  }catch(e){db.exec('ROLLBACK');throw e;}
 }
 export function processCommand(store,id,command,now=Date.now()){
