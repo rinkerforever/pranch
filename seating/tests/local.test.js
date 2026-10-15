@@ -32,6 +32,33 @@ function seededLocal(t){
  app.store.meta('active','1');return app;
 }
 const localRequest=(app,path,body,cookie='',client)=>app.handle(new Request('https://waco.local:8443'+path,{method:body?'POST':'GET',headers:{origin:'https://waco.local:8443',cookie},...(body?{body:JSON.stringify(body)}:{})}),client);
+test('iPad onboarding exposes only public connection information and manager QR uses the selected restaurant',async t=>{
+ const cloud=cloudFixture(t),fetch=path=>worker.fetch(new Request('https://cloud.example.test'+path),cloud.env,{waitUntil(){}});
+ cloud.db.prepare('UPDATE seating_hubs SET enabled=1').run();
+ const publicResponse=await fetch('/api/device-setup/waco');assert.equal(publicResponse.status,200);
+ const setup=await publicResponse.json();assert.equal(setup.setupUrl,'http://waco.local:8081/ipad-setup.html?location=waco');
+ assert.equal(setup.appUrl,'https://waco.local:8443');assert.equal(setup.certificateUrl,'http://waco.local:8081/seating.mobileconfig');
+ assert.deepEqual(Object.keys(setup).sort(),['appUrl','certificateUrl','local','location','locationId','setupUrl'].sort());
+ assert.equal((await fetch('/api/device-setup/other')).status,404);
+ assert.equal((await fetch('/api/locations/waco/ipad-qr')).status,401);
+ cloud.env.localIdentity=()=>({id:'admin',system_admin:1});
+ assert.equal((await fetch('/api/locations/waco/ipad-qr')).headers.get('content-type'),'image/svg+xml');
+ assert.deepEqual(await(await fetch('/api/locations/waco/ipad-setup')).json(),setup);
+ cloud.env.localIdentity=()=>({id:'host',system_admin:0});
+ cloud.db.prepare('INSERT INTO seating_grants VALUES(?,?,?)').run('host','waco','host');
+ assert.equal((await fetch('/api/locations/waco/ipad-qr')).status,403);
+ cloud.db.prepare("UPDATE seating_grants SET role='manager'").run();
+ assert.equal((await fetch('/api/locations/waco/ipad-qr')).status,200);
+ cloud.db.prepare('UPDATE seating_hubs SET enabled=0').run();
+ const fallback=await(await fetch('/api/device-setup/waco')).json();assert.equal(fallback.local,false);assert.equal(fallback.certificateUrl,null);assert.equal(fallback.setupUrl,'https://cloud.example.test/ipad-setup.html?location=waco');
+});
+test('Pi onboarding works without a login or internet and cannot access another restaurant',async t=>{
+ const app=seededLocal(t),response=await localRequest(app,'/api/device-setup/waco');assert.equal(response.status,200);
+ assert.equal((await response.json()).appUrl,'https://waco.local:8443');
+ assert.equal((await localRequest(app,'/api/device-setup/other')).status,404);
+ assert.equal((await localRequest(app,'/ipad-setup.html')).status,200);
+ assert.equal((await localRequest(app,'/api/locations/waco/state')).status,401);
+});
 test('local PIN is salted, restricted to loopback proxy, rate-limited and cannot authenticate cloud',async t=>{
  const app=seededLocal(t);assert.ok(!app.store.db.prepare('SELECT verifier FROM local_pins').get().verifier.includes('1234'));
  assert.equal((await localRequest(app,'/api/login',{pin:'1234'},'','203.0.113.1')).status,403);

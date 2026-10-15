@@ -1,7 +1,7 @@
 import {areaOptions,areaName,roomOptions} from './areas.js';
 import {planImage,cleanUpPlan} from './plan-cleanup.js';
 import {readyTracker} from './ready-alert.js';
-import {installApp,runtimeInfo,pairLocalServer} from './device.js';
+import {installApp,runtimeInfo,pairLocalServer,layoutSettings} from './device.js';
 import {roomInfo,activeRoomBlocks,scheduledRooms,walkInTables} from './rooms.js';
 import {planWaitlist,estimateNewParty,waitRange} from './wait-plan.js';
 import {presetCombinations,includesBoothCombination,childBoothFit} from './combinations.js';
@@ -325,6 +325,7 @@ async function boot(){runtime=demo?{mode:'cloud'}:await runtimeInfo();const loca
 boot().catch(e=>{if(e.status!==401)toast(e.message,true);});
 $('ready-ack').onclick=()=>{alerts.acknowledge(currentPlan().rows);showReadyAlert();};
 $('local-server-open').onclick=()=>pairLocalServer({locationId,api}).catch(e=>toast(e.message,true));
+$('layout-settings').onclick=()=>{if(demo)return toast('iPad setup is available when signed in to your restaurant.');layoutSettings({locationId,api}).catch(e=>toast(e.message,true));};
 $('pin-enroll-open').onclick=()=>$('pin-enroll-dialog').showModal();
 $('pin-enroll-form').onsubmit=async e=>{e.preventDefault();e.submitter.disabled=true;try{await api('/api/local/enroll',{method:'POST',body:JSON.stringify({email:$('pin-email').value,password:$('pin-password').value,pin:$('pin-new').value})});$('pin-password').value='';$('pin-new').value='';$('pin-enroll-dialog').close();toast('PIN saved. Sign in with your four-digit PIN.');}catch(error){$('pin-error').textContent=error.message;}finally{e.submitter.disabled=false;}};
 

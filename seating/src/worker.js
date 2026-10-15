@@ -1,6 +1,7 @@
 import {presetCombinations} from '../public/combinations.js';
 import {guestApi} from './guest.js';
 import qrcode from 'qrcode-generator';
+import {deviceSetup} from './device-setup.js';
 import { upgradeNumbering } from '../public/floor.js';
 import { initialState, applyAction, AppError } from './model.js';
 import {hubApi,hubRow,hubStatus,configureHub,relaySave} from './hub.js';
@@ -63,6 +64,8 @@ async function api(request,env,ctx,url){
     ctx.cookies.push(cookie('seat_access','',0),cookie('seat_refresh','',0));return json({ok:true});
   }
   if(url.pathname==='/api/runtime')return json(env.localRuntime?env.localRuntime():{mode:'cloud'});
+  const setupMatch=url.pathname.match(/^\/api\/device-setup\/([^/]+)$/);
+  if(setupMatch&&request.method==='GET')return json(await deviceSetup(env,decodeURIComponent(setupMatch[1]),url.origin));
   if(url.pathname.startsWith('/api/guest/'))return guestApi(request,env,ctx,url,{json,readBody,cookies,saveState:(id,row,state,requestId)=>saveState(env,id,row,state,{id:'guest-check-in'},requestId)});
   const profile=await identity(request,env,ctx);
   if(url.pathname==='/api/session'){
@@ -84,9 +87,17 @@ async function api(request,env,ctx,url){
       return json({ok:true});
     }
   }
-  const match=url.pathname.match(/^\/api\/locations\/([^/]+)\/(state|actions|floorplan|qr|hub)$/);
+  const match=url.pathname.match(/^\/api\/locations\/([^/]+)\/(state|actions|floorplan|qr|hub|ipad-setup|ipad-qr)$/);
   if(!match)throw new AppError('Not found.',404);
   const id=decodeURIComponent(match[1]),resource=match[2],role=await roleFor(env,profile,id);
+  if(['ipad-setup','ipad-qr'].includes(resource)){
+    if(!['admin','manager'].includes(role))throw new AppError('Manager access required.',403);
+    if(request.method!=='GET')throw new AppError('Method not allowed.',405);
+    const setup=await deviceSetup(env,id,url.origin);
+    if(resource==='ipad-setup')return json(setup);
+    const code=qrcode(0,'M');code.addData(setup.setupUrl);code.make();
+    return new Response(code.createSvgTag({cellSize:6,margin:24,scalable:true}),{headers:{'content-type':'image/svg+xml','cache-control':'private, no-store'}});
+  }
   if(resource==='hub'){if(env.localIdentity)throw new AppError('Pair local servers from the cloud site.',403);return configureHub(request,env,id,profile);}
   if(resource==='floorplan'&&request.method==='GET'){
     const row=await loadState(env,id,profile),state=JSON.parse(row.state_json);

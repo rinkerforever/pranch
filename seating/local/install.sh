@@ -75,6 +75,18 @@ route='  handle /seating.mobileconfig {\n    rewrite * /public/seating.mobilecon
 path.write_text(text.replace(marker,route+marker,1))
 PY
 fi
+if ! grep -q '@ipad_setup' /etc/pizza-ranch-seating/Caddyfile; then
+  python3 - <<'PY'
+from pathlib import Path
+path=Path('/etc/pizza-ranch-seating/Caddyfile')
+text=path.read_text()
+marker='  handle /seating.mobileconfig {'
+if marker not in text: raise SystemExit('Certificate profile route missing; review local setup configuration')
+# Only onboarding pages and public connection information are reachable over HTTP.
+route='  @ipad_setup {\n    method GET HEAD\n    path /ipad-setup.html /ipad-setup.js /ipad-setup.css /api/device-setup/*\n  }\n  handle @ipad_setup {\n    reverse_proxy 127.0.0.1:8790\n  }\n'
+path.write_text(text.replace(marker,route+marker,1))
+PY
+fi
 chown -R pr-seating-web:pr-seating-web /var/lib/pizza-ranch-seating-web
 runuser -u pr-seating-web -- env HOME=/var/lib/pizza-ranch-seating-web "$ROOT/web/usr/bin/caddy" validate --config /etc/pizza-ranch-seating/Caddyfile --adapter caddyfile
 install -d -m 755 -o pr-seating-web -g pr-seating-web /var/lib/pizza-ranch-seating-web/public
