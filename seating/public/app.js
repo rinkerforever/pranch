@@ -77,7 +77,7 @@ async function act(action){
   const releasedTables=action.type==='releaseRoom'?state.tables.filter(t=>t.roomBlock===action.id).map(t=>t.id):[];
   try{const data=demo?{state:demoModel.applyAction(state,action,role),version:version+1}:await api(endpoint('actions'),{method:'POST',headers:{'x-request-id':crypto.randomUUID()},body:JSON.stringify({version,action})});
     state=presetCombinations(upgradeNumbering(data.state));version=data.version;if(demo)localStorage.setItem('seating-preview',JSON.stringify(state));
-    if(action.type==='seat'||action.type==='cancelParty')partyId=null;
+    if(action.type==='seat'||action.type==='seatNow'||action.type==='cancelParty')partyId=null;
     selected=new Set([...selected].filter(id=>!releasedTables.includes(id)&&state.tables.some(t=>t.id===id)));
     if(['status','seat','seatNow','combine'].includes(action.type)){selected.clear();combining=false;closeSidebar();}
     render();connectionStatus();showReadyAlert();return true;
