@@ -1,5 +1,7 @@
 """Update only seating from the owner's fixed GitHub release, after service is clear."""
 import hashlib
+import argparse
+from contextlib import closing
 import io
 import json
 import os
@@ -26,7 +28,7 @@ def download(name,limit):
 
 def clear_for_update():
     if not DB.exists(): return True
-    with sqlite3.connect(f'file:{DB}?mode=ro',uri=True) as db:
+    with closing(sqlite3.connect(f'file:{DB}?mode=ro',uri=True)) as db:
         for (raw,) in db.execute('SELECT state_json FROM seating_state'):
             state=json.loads(raw)
             if any(p['status'] in ('waiting','seated','reserved') for p in state['parties']): return False
@@ -45,12 +47,13 @@ def unpack(data,destination):
     for name in ('VERSION','local/install.sh','local/server.js','src/worker.js','public/index.html'):
         if not (destination/name).is_file(): raise ValueError('Incomplete seating update')
 
-def main():
+def main(force=False):
     if not Path('/etc/pizza-ranch-seating/seating.env').is_file(): print('Pair this Pi before enabling automatic seating updates.');return
     manifest=json.loads(download('seating-pi.json',4096))
     if not re.fullmatch('[a-f0-9]{40}',manifest['version']) or not re.fullmatch('[a-f0-9]{64}',manifest['sha256']): raise ValueError('Invalid update manifest')
     if (ROOT/'current/VERSION').read_text().strip()==manifest['version']: print('Seating is current.');return
-    if not clear_for_update(): print('Seating update waiting until guests and room blocks are cleared.');return
+    if not force and not clear_for_update(): print('Seating update waiting until guests and room blocks are cleared.');return
+    if force: print('Applying administrator-requested update during service; saved seating data will be preserved.',flush=True)
     payload=download('seating-pi.tar.gz',LIMIT)
     if hashlib.sha256(payload).hexdigest()!=manifest['sha256']: raise ValueError('Update checksum mismatch; leaving current version running')
     with tempfile.TemporaryDirectory(prefix='seating-update-') as folder:
@@ -60,11 +63,11 @@ def main():
         previous=(ROOT/'current').resolve()
         subprocess.run(['systemctl','stop','pizza-ranch-seating.service'],check=True)
         # Check again after stopping: a guest may have arrived while the package downloaded.
-        if not clear_for_update(): subprocess.run(['systemctl','start','pizza-ranch-seating.service'],check=True);print('Update postponed for active service.');return
+        if not force and not clear_for_update(): subprocess.run(['systemctl','start','pizza-ranch-seating.service'],check=True);print('Update postponed for active service.');return
         backup=None
         if DB.exists():
             backup=DB.with_name('before-update.sqlite')
-            with sqlite3.connect(DB) as src,sqlite3.connect(backup) as dst: src.backup(dst)
+            with closing(sqlite3.connect(DB)) as src,closing(sqlite3.connect(backup)) as dst: src.backup(dst)
             os.chmod(backup,0o600)
         try:
             subprocess.run(['/bin/bash',str(source/'local/install.sh')],check=True,timeout=600)
@@ -80,10 +83,13 @@ def main():
             subprocess.run(['systemctl','stop','pizza-ranch-seating.service'],check=False)
             temp=ROOT/'current.rollback';temp.symlink_to(previous);temp.replace(ROOT/'current')
             if backup:
-                with sqlite3.connect(backup) as src,sqlite3.connect(DB) as dst: src.backup(dst)
+                with closing(sqlite3.connect(backup)) as src,closing(sqlite3.connect(DB)) as dst: src.backup(dst)
             subprocess.run(['systemctl','start','pizza-ranch-seating.service'],check=False)
             raise
 
 if __name__=='__main__':
-    try: main()
+    parser=argparse.ArgumentParser(description='Install the latest verified seating release from GitHub.')
+    parser.add_argument('--force',action='store_true',help='Apply an administrator-requested update during active service, preserving the seating database.')
+    args=parser.parse_args()
+    try: main(force=args.force)
     except Exception as error: print('Seating update not applied: '+str(error),flush=True);raise SystemExit(1)

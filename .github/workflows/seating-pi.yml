@@ -23,6 +23,7 @@ jobs:
           npm install --ignore-scripts
           node scripts/prepare-assets.js
           node --test tests/*.test.js
+          python3 -m unittest discover -s tests -p '*_test.py'
           node scripts/package-pi.mjs
       - name: Publish Pi update package
         env:

@@ -50,6 +50,9 @@ Restoring an old database that is behind the cloud locks seating for administrat
 
 Useful checks: `systemctl status pizza-ranch-seating pizza-ranch-seating-web`, `journalctl -u pizza-ranch-seating -n 50`, and `journalctl -u pizza-ranch-seating-update -n 50`. The runtime endpoint reports connection state without exposing tokens or PINs.
 
+## Immediate GitHub updates
+For an administrator-requested immediate update, use `sudo flock /run/lock/pizza-ranch-seating-update.lock python3 /opt/pizza-ranch-seating/current/local/update.py --force`. This briefly restarts seating even during service. It preserves the database and retains archive verification, backup, health checks, and rollback. The scheduled timer continues to wait for clear service. Deploy code through the GitHub release rather than editing the installed Pi files.
+
 ## Pilot acceptance
 
 Use two real iPads: add a guest from one and observe it on the other; race two parties for the same table; test PIN lockout and role restrictions; unplug only the internet uplink while keeping Wi-Fi/ethernet powered; verify public QR submissions fail and host additions continue; reconnect and verify no duplicates or lost updates; restart the Pi and confirm saved state; test room cleanup, pulse acknowledgment and Home Screen launch in both orientations. Browser emulation does not replace these device/network checks.
