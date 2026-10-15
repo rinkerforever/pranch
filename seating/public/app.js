@@ -1,5 +1,6 @@
 import {areaOptions,areaName,roomOptions} from './areas.js';
 import {planImage,cleanUpPlan} from './plan-cleanup.js';
+import {drawingBounds,fullPlanBox} from './plan-fit.js';
 import {readyTracker} from './ready-alert.js';
 import {installApp,runtimeInfo,pairLocalServer,layoutSettings} from './device.js';
 import {roomInfo,activeRoomBlocks,scheduledRooms,walkInTables} from './rooms.js';
@@ -12,6 +13,7 @@ const demo=new URLSearchParams(location.search).get('demo')==='1';
 let state=null,version=0,profile=null,locations=[],locationId=null,role='viewer',selected=new Set(),partyId=null,editing=false,tableDraft=null,editGuest=null,busy=false,view='Dining',viewBox=[140,550,1495,360],toastTimer,uploadBusy=false;
 let demoModel;
 let runtime={mode:'cloud'},transportReady=false,connection=null,alerts=readyTracker();
+let backgroundFit=null,viewFitted=true;
 installApp();
 const names={open:'Open',in_use:'In use',cleaning:'Cleaning',reserved:'Room held'};
 function el(tag,attrs={},text){const n=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(k==='class')n.className=v;else n.setAttribute(k,v);}if(text!==undefined)n.textContent=text;return n;}
@@ -60,6 +62,7 @@ async function refresh(force=false){
   try{
     const data=demo?{state:JSON.parse(localStorage.getItem('seating-preview')||'null')||demoInitial(),version:version+1,role:'admin'}:await api(endpoint('state'));
     if(requestedLocation!==locationId||data.version<version)return;
+    if(force)viewFitted=true;
     connection=data.connection;transportReady=!connection?.requiresRecovery&&!(runtime.mode!=='local'&&connection?.mode==='local'&&!connection.online);
     if(force||data.version!==version||role!==data.role){state=presetCombinations(upgradeNumbering(data.state));version=data.version;role=data.role;if(force&&(state.background?.imported||state.areaConfig))viewBox=importedViewBox(view);selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
     else if(!editing){renderWait();renderSelection();renderRoomBookings();}
@@ -114,7 +117,22 @@ function tableSymbol(t){
     const up=()=>{group.removeEventListener('pointermove',move);group.removeEventListener('pointerup',up);if(group.dataset.dragged)toast('Position updated. Choose Save table to apply it.');setTimeout(()=>delete group.dataset.dragged,50);};group.addEventListener('pointermove',move);group.addEventListener('pointerup',up);
   });return group;
 }
+function preparePlanFit(){
+ if(!state.background)return;
+ const key=locationId+'|'+(state.background.key||state.background.dataUrl);
+ if(backgroundFit?.key===key)return;
+ const fit=backgroundFit={key,bounds:null};
+ const image=new Image();image.src=demo?state.background.dataUrl:endpoint('floorplan')+`?v=${version}`;
+ image.decode().then(()=>{
+  const canvas=document.createElement('canvas');canvas.width=1660;canvas.height=950;
+  const ctx=canvas.getContext('2d',{willReadFrequently:true}),scale=Math.min(1660/image.naturalWidth,950/image.naturalHeight),w=image.naturalWidth*scale,h=image.naturalHeight*scale;
+  ctx.drawImage(image,(1660-w)/2,(950-h)/2,w,h);fit.bounds=drawingBounds(ctx.getImageData(0,0,1660,950));
+  if(backgroundFit===fit&&view==='All'&&viewFitted){viewBox=fullPlanBox(fit.bounds,state.tables);renderFloor();}
+ }).catch(()=>{/* Keep the complete canvas if the image cannot be inspected. */});
+}
 function renderFloor(){
+  preparePlanFit();
+  if(view==='All'&&state.background&&viewFitted)viewBox=fullPlanBox(backgroundFit?.bounds,state.tables);
   const viewport=$('floor');viewport.replaceChildren();viewport.setAttribute('viewBox',viewBox.join(' '));
   const clip=svg('clipPath',{id:'floor-view-clip',clipPathUnits:'userSpaceOnUse'});
   clip.append(svg('rect',{id:'floor-view-bounds',x:viewBox[0],y:viewBox[1],width:viewBox[2],height:viewBox[3]}));
@@ -230,14 +248,14 @@ function renderRecommendations(){
   if(!candidates.length)$('recommendations').append(el('p',{class:'empty'},'No available fit. A manager can confirm booth capacities or approve table combinations in Layout editor.'));
 }
 function importedViewBox(value){
- if(value==='All')return [0,0,1660,950];
+ if(value==='All')return fullPlanBox(backgroundFit?.key===locationId+'|'+(state.background?.key||state.background?.dataUrl)?backgroundFit.bounds:null,state.tables);
  const rooms=new Set(areaOptions(state).filter(a=>a.kind==='room').map(a=>a.id));
  const tables=state.tables.filter(t=>value==='Dining'?!rooms.has(t.area):value==='Party rooms'?rooms.has(t.area):t.area===value);
  if(!tables.length)return [0,0,1660,950];
  const xs=tables.map(t=>t.x),ys=tables.map(t=>t.y),x=Math.max(0,Math.min(...xs)-65),y=Math.max(0,Math.min(...ys)-65);
  return [x,y,Math.min(1660-x,Math.max(150,Math.max(...xs)-x+65)),Math.min(950-y,Math.max(150,Math.max(...ys)-y+65))];
 }
-function setView(value){closeSidebar();view=value;const boxes={All:[0,-20,1660,950],Dining:[140,550,1495,360],A:[1300,540,340,350],B:[680,610,665,285],C:[155,610,540,285],'Party rooms':[1000,-10,640,220],'Rose City':[1010,-10,190,200],'Azalea Trail':[1190,-10,210,200],'Piney Woods':[1390,-10,250,230]};viewBox=(state?.background?.imported||state?.areaConfig)?importedViewBox(value):(boxes[value]||boxes.All);renderAreas();if(state)renderFloor();}
+function setView(value){closeSidebar();view=value;viewFitted=true;const boxes={All:[0,-20,1660,950],Dining:[140,550,1495,360],A:[1300,540,340,350],B:[680,610,665,285],C:[155,610,540,285],'Party rooms':[1000,-10,640,220],'Rose City':[1010,-10,190,200],'Azalea Trail':[1190,-10,210,200],'Piney Woods':[1390,-10,250,230]};viewBox=(state?.background?.imported||state?.areaConfig)?importedViewBox(value):(boxes[value]||boxes.All);renderAreas();if(state)renderFloor();}
 function renderAreas(){
  const areas=areaOptions(state),labels={All:'Full plan',Dining:'Dining room'};
  for(const a of areas)labels[a.id]=a.name;
@@ -275,9 +293,9 @@ $('add-table').onclick=()=>{showSidebar('details');tableDraft={area:areaOptions(
 $('table-area').onchange=()=>renderAllowed();$('table-kind').onchange=()=>renderAllowed();
 $('layout-form').onsubmit=async e=>{e.preventDefault();if(!tableDraft)return;e.submitter.disabled=true;const table={area:$('table-area').value,number:$('table-number').value,kind:$('table-kind').value,capacity:$('table-capacity').value===''?null:Number($('table-capacity').value),orientation:$('table-orientation').value,x:Number($('table-x').value),y:Number($('table-y').value),allowed:[...$('allowed-tables').querySelectorAll('input:checked')].map(i=>i.value)};const ok=await act({type:tableDraft.id?'layout':'addTable',id:tableDraft.id,table});e.submitter.disabled=false;if(ok){tableDraft=null;$('layout-panel').hidden=true;toast('Table layout saved.');}};
 $('remove-table').onclick=async()=>{if(!tableDraft?.id)return;if(await confirmChange('Remove table?',`Remove ${label(tableDraft)} from this layout? You can add it again in Layout editor.`)&&await act({type:'removeTable',id:tableDraft.id})){tableDraft=null;selected.clear();$('layout-panel').hidden=true;renderFloor();}};
-for(const[id,factor]of [['zoom-in',.75],['zoom-out',1.333]])$(id).onclick=()=>{const[x,y,w,h]=viewBox;const nw=Math.min(2000,Math.max(120,w*factor)),nh=h*(nw/w);viewBox=[x+(w-nw)/2,y+(h-nh)/2,nw,nh];renderFloor();};$('zoom-fit').onclick=()=>setView(view);
+for(const[id,factor]of [['zoom-in',.75],['zoom-out',1.333]])$(id).onclick=()=>{viewFitted=false;const[x,y,w,h]=viewBox;const nw=Math.min(2000,Math.max(120,w*factor)),nh=h*(nw/w);viewBox=[x+(w-nw)/2,y+(h-nh)/2,nw,nh];renderFloor();};$('zoom-fit').onclick=()=>setView(view);
 // Pan the canvas from an empty area, keeping table dragging exclusive to Layout editor.
-$('floor').addEventListener('pointerdown',e=>{if(e.target.closest('.table-node'))return;const floor=$('floor'),start=[e.clientX,e.clientY],box=[...viewBox],matrix=floor.getScreenCTM();floor.setPointerCapture(e.pointerId);const move=ev=>{viewBox=[box[0]-(ev.clientX-start[0])/matrix.a,box[1]-(ev.clientY-start[1])/matrix.d,box[2],box[3]];floor.setAttribute('viewBox',viewBox.join(' '));const bounds=$('floor-view-bounds');bounds.setAttribute('x',viewBox[0]);bounds.setAttribute('y',viewBox[1]);};const end=()=>{floor.removeEventListener('pointermove',move);floor.removeEventListener('pointerup',end);};floor.addEventListener('pointermove',move);floor.addEventListener('pointerup',end);});
+$('floor').addEventListener('pointerdown',e=>{if(e.target.closest('.table-node'))return;const floor=$('floor'),start=[e.clientX,e.clientY],box=[...viewBox],matrix=floor.getScreenCTM();floor.setPointerCapture(e.pointerId);const move=ev=>{viewFitted=false;viewBox=[box[0]-(ev.clientX-start[0])/matrix.a,box[1]-(ev.clientY-start[1])/matrix.d,box[2],box[3]];floor.setAttribute('viewBox',viewBox.join(' '));const bounds=$('floor-view-bounds');bounds.setAttribute('x',viewBox[0]);bounds.setAttribute('y',viewBox[1]);};const end=()=>{floor.removeEventListener('pointermove',move);floor.removeEventListener('pointerup',end);};floor.addEventListener('pointermove',move);floor.addEventListener('pointerup',end);});
 $('upload').onchange=async()=>{
   const file=$('upload').files[0];if(!file||busy||uploadBusy||!canEdit())return;
   if(file.size>20*1024*1024){toast('Choose a file smaller than 20 MB.',true);$('upload').value='';return;}
