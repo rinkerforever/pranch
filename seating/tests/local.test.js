@@ -110,3 +110,11 @@ test('unchanged staff polls avoid disk writes but changed permissions revoke acc
  syncRoster(store,'waco',roster,101000);assert.equal(store.db.prepare('SELECT total_changes() AS n').get().n,before);
  syncRoster(store,'waco',[],102000);assert.equal(store.db.prepare('SELECT active FROM user_profiles WHERE id=?').get('h').active,0);
 });
+test('idle heartbeats omit unchanged seating and staff snapshots',async t=>{
+ const cloud=cloudFixture(t);const first=await(await cloud.call()).json();
+ await cloud.call({activate:true,version:first.version,stateHash:first.stateHash});
+ const url=new URL(`https://cloud.example.test/api/hub/waco?since=0&roster=${hash(JSON.stringify(first.roster))}`);
+ const response=await hubApi(new Request(url,{headers:{authorization:'Bearer secret'}}),cloud.env,url),small=await response.json();
+ assert.equal(small.state,undefined);assert.equal(small.roster,undefined);assert.equal(small.stateHash,first.stateHash);
+ assert.equal((await cloud.call({version:0,results:[]})).status,200);assert.equal(cloud.store.snapshot('waco').version,0);
+});

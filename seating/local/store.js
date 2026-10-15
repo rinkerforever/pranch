@@ -20,6 +20,7 @@ export function openStore(directory){
  return {db,adapter,meta(key,value){if(value!==undefined)db.prepare('INSERT OR REPLACE INTO local_meta VALUES(?,?)').run(key,String(value));return db.prepare('SELECT value FROM local_meta WHERE key=?').get(key)?.value;},snapshot(id){const r=db.prepare('SELECT version,state_json FROM seating_state WHERE location_id=?').get(id);return r?{version:r.version,state:JSON.parse(r.state_json)}:null;},close:()=>db.close()};
 }
 export function syncRoster(store,id,roster,now=Date.now()){
+ if(!roster){if(now-Number(store.meta('rosterAt')||0)>=60000)store.meta('rosterAt',now);return;}
  const fingerprint=hash(JSON.stringify(roster));
  if(store.meta('rosterHash')===fingerprint){if(now-Number(store.meta('rosterAt')||0)>=60000)store.meta('rosterAt',now);return;}
  const db=store.db;db.exec('BEGIN IMMEDIATE');try{

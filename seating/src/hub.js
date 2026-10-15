@@ -66,9 +66,9 @@ export async function hubApi(request,env,url){
    return json({ok:true,enabled:true});
   }
   if(!hub.enabled)throw new AppError('Activate this local server first.',409);
-  if(!Number.isSafeInteger(body.version)||body.version<row.version||!body.state||!Array.isArray(body.state.tables)||!Array.isArray(body.state.parties)||!Array.isArray(body.results)||body.results.length>20)throw new AppError('Local data is older than the cloud or malformed. Administrator recovery is required.',409);
-  const snapshot=JSON.stringify(body.state);
-  if(body.version===row.version&&snapshot!==row.state_json)throw new AppError('State differs at the same version. Administrator recovery is required.',409);
+  if(!Number.isSafeInteger(body.version)||body.version<row.version||body.version>row.version&&!body.state||body.state&&(!Array.isArray(body.state.tables)||!Array.isArray(body.state.parties))||!Array.isArray(body.results)||body.results.length>20)throw new AppError('Local data is older than the cloud or malformed. Administrator recovery is required.',409);
+  const snapshot=body.state?JSON.stringify(body.state):row.state_json;
+  if(body.version===row.version&&body.state&&snapshot!==JSON.stringify(JSON.parse(row.state_json)))throw new AppError('State differs at the same version. Administrator recovery is required.',409);
   if(body.version>row.version)await env.DB.prepare("UPDATE seating_state SET state_json=?,version=?,updated_by='local-server',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE location_id=? AND version<?").bind(snapshot,body.version,id,body.version).run();
   for(const result of body.results){
    if(typeof result.id!=='string'||!result.response||JSON.stringify(result.response).length>2*1024*1024)throw new AppError('Invalid command result.');
@@ -83,5 +83,6 @@ export async function hubApi(request,env,url){
  if(!row)throw new AppError('Open this store’s seating chart online before pairing.',409);
  const roster=await env.DB.prepare("SELECT u.id,u.auth_user_id,u.email,u.display_name,u.system_admin,CASE WHEN u.system_admin=1 THEN 'admin' ELSE g.role END AS role FROM user_profiles u LEFT JOIN seating_grants g ON g.user_id=u.id AND g.location_id=? WHERE u.active=1 AND (u.system_admin=1 OR g.role IS NOT NULL)").bind(id).all();
  const commands=await env.DB.prepare("SELECT id,expected_version,state_json,expires_at FROM seating_commands WHERE location_id=? AND status='pending' ORDER BY created_at LIMIT 20").bind(id).all();
- return json({enabled:!!hub.enabled,location,version:row.version,state:JSON.parse(row.state_json),stateHash:await digest(row.state_json),roster:roster.results,commands:commands.results,localUrl:hub.local_url});
+ const rosterHash=await digest(JSON.stringify(roster.results));
+ return json({enabled:!!hub.enabled,location,version:row.version,...(!hub.enabled||url.searchParams.get('since')!==String(row.version)?{state:JSON.parse(row.state_json)}:{}),stateHash:await digest(row.state_json),...(url.searchParams.get('roster')!==rosterHash?{roster:roster.results}:{}),commands:commands.results,localUrl:hub.local_url});
 }
