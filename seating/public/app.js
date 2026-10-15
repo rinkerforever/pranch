@@ -17,6 +17,7 @@ let runtime={mode:'cloud'},transportReady=false,connection=null,alerts=readyTrac
 let backgroundFit=null,viewFitted=true;
 let combining=false;
 let seatNowMode=false,guestAdviceKey='';
+let recoveringAccess=false;
 installApp();
 const names={open:'Open',in_use:'In use',cleaning:'Cleaning',reserved:'Room held'};
 function el(tag,attrs={},text){const n=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(k==='class')n.className=v;else n.setAttribute(k,v);}if(text!==undefined)n.textContent=text;return n;}
@@ -47,12 +48,23 @@ async function loadSession(){
   if(demo){demoModel=await import('./model.js');profile={display_name:'Preview manager',system_admin:true};locations=[{id:'preview',name:'Pizza Ranch · Preview',role:'admin'}];data={profile,locations};}
   else data=await api('/api/session');
   profile=data.profile;locations=data.locations;
+  locationId=null;version=-1;
   $('login').hidden=true;$('app').hidden=false;$('demo-banner').hidden=!demo;
   $('staff-open').hidden=!profile.system_admin;$('location').replaceChildren(...locations.map(l=>new Option(l.name,l.id)));
   $('local-server-open').hidden=demo||runtime.mode==='local'||!profile.system_admin;
   $('logout').textContent=runtime.mode==='local'?'Lock / switch employee':'Sign out';
   $('no-access').hidden=locations.length>0;$('workspace').hidden=!locations.length;
   if(locations.length){if(matchMedia('(max-width:599px)').matches)setView('C');locationId=locations[0].id;role=locations[0].role;await refresh(true);}
+}
+async function recoverLocationAccess(){
+  if(recoveringAccess)return;
+  recoveringAccess=true;transportReady=false;state=null;locationId=null;version=-1;selected.clear();partyId=null;tableDraft=null;editing=false;combining=false;
+  $('workspace').hidden=true;$('floor').replaceChildren();$('location').replaceChildren();
+  for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
+  showReadyAlert();
+  try{await loadSession();toast('Your restaurant access changed. Available locations have been updated.');}
+  catch(e){$('app').hidden=true;$('login').hidden=false;toast(e.message,true);}
+  finally{recoveringAccess=false;}
 }
 function demoInitial(){let s=demoModel.initialState();
   s.parties=[{id:'johnson',name:'Johnson',size:6,notes:'Prefers main dining room',arrivedAt:Date.now()-18*60000,status:'waiting'},{id:'miller',name:'Miller',size:2,notes:'',arrivedAt:Date.now()-12*60000,status:'waiting'},{id:'davis',name:'Davis',size:4,notes:'One high chair',arrivedAt:Date.now()-8*60000,status:'waiting'}];
@@ -70,7 +82,7 @@ async function refresh(force=false){
     if(force||data.version!==version||role!==data.role){state=presetCombinations(upgradeNumbering(data.state));version=data.version;role=data.role;if(force&&(state.background?.imported||state.areaConfig))viewBox=importedViewBox(view);selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
     else if(!editing){renderWait();renderSelection();renderRoomBookings();}
     connectionStatus(data.connection);showReadyAlert();if($('guest-dialog').open)renderGuestQuote();
-  }catch(e){transportReady=false;showReadyAlert();sync(false,'Disconnected · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(force)toast(e.message,true);}
+  }catch(e){if(requestedLocation!==locationId)return;transportReady=false;showReadyAlert();sync(false,'Disconnected · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(e.status===403){if(recoveringAccess)throw e;await recoverLocationAccess();}else if(force)toast(e.message,true);}
 }
 async function act(action){
   if(busy||!transportReady){if(!busy)toast('Reconnect to the restaurant before making changes.',true);return false;}busy=true;$('location').disabled=true;sync(false,'Saving…');
@@ -81,7 +93,7 @@ async function act(action){
     selected=new Set([...selected].filter(id=>!releasedTables.includes(id)&&state.tables.some(t=>t.id===id)));
     if(['status','seat','seatNow','combine'].includes(action.type)){selected.clear();combining=false;closeSidebar();}
     render();connectionStatus();showReadyAlert();return true;
-  }catch(e){toast(e.message,true);sync(false,'Change not saved');if(e.status===409){busy=false;await refresh(true);}if(e.status===401){$('app').hidden=true;$('login').hidden=false;}return false;}finally{busy=false;$('location').disabled=false;}
+  }catch(e){toast(e.message,true);sync(false,'Change not saved');if(e.status===409){busy=false;await refresh(true);}if(e.status===401){$('app').hidden=true;$('login').hidden=false;}if(e.status===403){busy=false;await recoverLocationAccess();}return false;}finally{busy=false;$('location').disabled=false;}
 }
 function current(){return state.tables.filter(t=>selected.has(t.id));}
 function canWrite(){return transportReady&&['admin','manager','host'].includes(role);}

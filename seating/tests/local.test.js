@@ -14,6 +14,7 @@ function temporary(t){if(!cleanup.has(t)){const tasks={dirs:[],close:[]};cleanup
 const closeAfter=(t,fn)=>cleanup.get(t).close.push(fn);
 function cloudFixture(t){
  const store=openStore(temporary(t));closeAfter(t,()=>store.close());const db=store.db;
+ db.exec('CREATE TABLE user_location_roles(user_id TEXT,location_id TEXT,role TEXT,permissions_json TEXT)');
  db.prepare('INSERT INTO locations VALUES(?,?,1)').run('waco','Waco');
  db.prepare('INSERT INTO user_profiles VALUES(?,?,?,?,1,1)').run('admin','auth-admin','admin@example.test','Admin');
  db.prepare('INSERT INTO seating_state(location_id,version,state_json,updated_by) VALUES(?,0,?,?)').run('waco',JSON.stringify(initialState()),'test');
@@ -137,6 +138,21 @@ test('unchanged staff polls avoid disk writes but changed permissions revoke acc
  syncRoster(store,'waco',roster,101000);assert.equal(store.db.prepare('SELECT total_changes() AS n').get().n,before);
  syncRoster(store,'waco',[],102000);assert.equal(store.db.prepare('SELECT active FROM user_profiles WHERE id=?').get('h').active,0);
 });
+test('Pi roster honors portal assignment removal despite an old seating grant',async t=>{
+ const cloud=cloudFixture(t),local=seededLocal(t);
+ cloud.db.exec("INSERT INTO user_profiles VALUES('host','auth-host','host@example.test','Host',0,1); INSERT INTO seating_grants VALUES('host','waco','host'); INSERT INTO user_location_roles VALUES('host','waco','operator','[]');");
+ let roster=(await(await cloud.call()).json()).roster;
+ assert.deepEqual(roster.map(u=>u.id).sort(),['admin','host']);
+ syncRoster(local.store,'waco',roster);
+ local.store.db.prepare('INSERT INTO local_sessions VALUES(?,?,?)').run('existing-session','host',Date.now()+60000);
+ cloud.db.exec("DELETE FROM user_location_roles WHERE user_id='host'");
+ roster=(await(await cloud.call()).json()).roster;
+ assert.deepEqual(roster.map(u=>u.id),['admin']);syncRoster(local.store,'waco',roster);
+ assert.equal(local.store.db.prepare("SELECT active FROM user_profiles WHERE id='host'").get().active,0);
+ assert.equal(local.store.db.prepare("SELECT * FROM local_sessions WHERE user_id='host'").get(),undefined);
+ assert.equal(local.store.db.prepare("SELECT * FROM seating_grants WHERE user_id='host'").get(),undefined);
+});
+
 test('idle heartbeats omit unchanged seating and staff snapshots',async t=>{
  const cloud=cloudFixture(t);const first=await(await cloud.call()).json();
  await cloud.call({activate:true,version:first.version,stateHash:first.stateHash});

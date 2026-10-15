@@ -5,11 +5,27 @@ import {readFileSync} from 'node:fs';
 import worker from '../src/worker.js';
 function fixture(){
   const sqlite=new DatabaseSync(':memory:');sqlite.exec(readFileSync(new URL('../migrations/0001_seating.sql',import.meta.url),'utf8'));
-  sqlite.exec("CREATE TABLE user_profiles(id TEXT,auth_user_id TEXT,email TEXT,display_name TEXT,system_admin INTEGER,active INTEGER); CREATE TABLE locations(id TEXT,name TEXT,active INTEGER); INSERT INTO locations VALUES('loc','Test restaurant',1); INSERT INTO user_profiles VALUES('admin','auth-admin','admin@example.test','Admin',1,1); INSERT INTO user_profiles VALUES('viewer','auth-viewer','viewer@example.test','Viewer',0,1); INSERT INTO seating_grants VALUES('viewer','loc','viewer');");
+  sqlite.exec("CREATE TABLE user_profiles(id TEXT,auth_user_id TEXT,email TEXT,display_name TEXT,system_admin INTEGER,active INTEGER); CREATE TABLE locations(id TEXT,name TEXT,active INTEGER); CREATE TABLE user_location_roles(user_id TEXT,location_id TEXT,role TEXT,permissions_json TEXT); INSERT INTO user_location_roles VALUES('viewer','loc','viewer','[]'); INSERT INTO locations VALUES('loc','Test restaurant',1); INSERT INTO user_profiles VALUES('admin','auth-admin','admin@example.test','Admin',1,1); INSERT INTO user_profiles VALUES('viewer','auth-viewer','viewer@example.test','Viewer',0,1); INSERT INTO seating_grants VALUES('viewer','loc','viewer');");
   const DB={prepare(sql){let args=[];return{bind(...values){args=values;return this;},async first(){return sqlite.prepare(sql).get(...args)||null;},async all(){return{results:sqlite.prepare(sql).all(...args)};},async run(){const r=sqlite.prepare(sql).run(...args);return{meta:{changes:Number(r.changes)}};}};}};
   const env={DB,SUPABASE_URL:'https://auth.example.test',SUPABASE_PUBLISHABLE_KEY:'public',ASSETS:{fetch:()=>new Response('page')}};
   return{sqlite,env,async call(path,body,token='admin',origin='https://seating.example.test'){return worker.fetch(new Request('https://seating.example.test'+path,{method:body?'POST':'GET',headers:{cookie:`seat_access=${token}`,origin,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),env,{waitUntil(){}});}};
 }
+test('portal assignments restrict old seating grants, direct requests and newly enabled access',async t=>{
+ t.mock.method(globalThis,'fetch',async(url,options)=>new Response(JSON.stringify({id:options.headers.authorization==='Bearer viewer'?'auth-viewer':'auth-admin'})));
+ const f=fixture();t.after(()=>f.sqlite.close());
+ f.sqlite.exec("INSERT INTO locations VALUES('other','Other restaurant',1); INSERT INTO seating_grants VALUES('viewer','other','host');");
+ const session=async token=>(await(await f.call('/api/session',null,token)).json()).locations.map(l=>l.id);
+ assert.deepEqual(await session('viewer'),['loc']);assert.equal((await session('admin')).length,2);
+ for(const resource of ['state','floorplan','qr','ipad-setup','hub'])assert.equal((await f.call('/api/locations/other/'+resource,null,'viewer')).status,403);
+ assert.equal((await f.call('/api/locations/other/actions',{version:0,action:{type:'addParty',name:'Guest',size:2}},'viewer')).status,403);
+ assert.equal((await f.call('/api/staff',{userId:'viewer',locationId:'other',role:'host'})).status,403);
+ f.sqlite.exec("INSERT INTO user_location_roles VALUES('viewer','other','operator','[]')");
+ assert.deepEqual(await session('viewer'),['other','loc']);assert.equal((await f.call('/api/locations/other/state',null,'viewer')).status,200);
+ f.sqlite.exec("DELETE FROM user_location_roles WHERE user_id='viewer'");
+ assert.deepEqual(await session('viewer'),[]);assert.equal((await f.call('/api/locations/loc/state',null,'viewer')).status,403);
+ assert.equal((await f.call('/api/staff',{userId:'viewer',locationId:'other',role:'none'})).status,200);
+});
+
 test('competing Seat now requests commit one seated party and preserve accessibility preferences',async t=>{
  t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
  const f=fixture();t.after(()=>f.sqlite.close());const first=await(await f.call('/api/locations/loc/state')).json();

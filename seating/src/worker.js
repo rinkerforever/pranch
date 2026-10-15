@@ -30,6 +30,7 @@ async function roleFor(env,profile,id){
   const loc=await env.DB.prepare('SELECT id,name FROM locations WHERE id=? AND active=1').bind(id).first();
   if(!loc)throw new AppError('Location not found.',404);
   if(profile.system_admin)return 'admin';
+  if(!env.localIdentity&&!await env.DB.prepare('SELECT 1 FROM user_location_roles WHERE user_id=? AND location_id=?').bind(profile.id,id).first())throw new AppError('This location is not assigned to your account in the manager portal.',403);
   const row=await env.DB.prepare('SELECT role FROM seating_grants WHERE user_id=? AND location_id=?').bind(profile.id,id).first();
   if(!row)throw new AppError('A restaurant administrator must grant you seating access.',403);
   return row.role;
@@ -69,7 +70,8 @@ async function api(request,env,ctx,url){
   if(url.pathname.startsWith('/api/guest/'))return guestApi(request,env,ctx,url,{json,readBody,cookies,saveState:(id,row,state,requestId)=>saveState(env,id,row,state,{id:'guest-check-in'},requestId)});
   const profile=await identity(request,env,ctx);
   if(url.pathname==='/api/session'){
-    const rows=profile.system_admin?await env.DB.prepare("SELECT id,name,'admin' AS role FROM locations WHERE active=1 ORDER BY name").all():await env.DB.prepare('SELECT l.id,l.name,g.role FROM locations l JOIN seating_grants g ON g.location_id=l.id WHERE l.active=1 AND g.user_id=? ORDER BY l.name').bind(profile.id).all();
+    const assigned=env.localIdentity?'':' AND EXISTS(SELECT 1 FROM user_location_roles r WHERE r.user_id=g.user_id AND r.location_id=l.id)';
+    const rows=profile.system_admin?await env.DB.prepare("SELECT id,name,'admin' AS role FROM locations WHERE active=1 ORDER BY name").all():await env.DB.prepare(`SELECT l.id,l.name,g.role FROM locations l JOIN seating_grants g ON g.location_id=l.id WHERE l.active=1 AND g.user_id=?${assigned} ORDER BY l.name`).bind(profile.id).all();
     return json({profile,locations:rows.results});
   }
   if(url.pathname==='/api/staff'){
@@ -82,6 +84,7 @@ async function api(request,env,ctx,url){
     if(request.method==='POST'){
       const body=await readBody(request);await roleFor(env,profile,body.locationId);
       const user=await env.DB.prepare('SELECT id FROM user_profiles WHERE id=? AND active=1').bind(body.userId).first();if(!user)throw new AppError('User not found.');
+      if(body.role!=='none'&&!await env.DB.prepare('SELECT 1 FROM user_location_roles WHERE user_id=? AND location_id=?').bind(user.id,body.locationId).first())throw new AppError('Assign this account to the location in the manager portal before enabling seating access.',403);
       if(body.role==='none')await env.DB.prepare('DELETE FROM seating_grants WHERE user_id=? AND location_id=?').bind(body.userId,body.locationId).run();
       else{if(!['manager','host','viewer'].includes(body.role))throw new AppError('Invalid role.');await env.DB.prepare('INSERT INTO seating_grants(user_id,location_id,role) VALUES(?,?,?) ON CONFLICT(user_id,location_id) DO UPDATE SET role=excluded.role').bind(body.userId,body.locationId,body.role).run();}
       return json({ok:true});
