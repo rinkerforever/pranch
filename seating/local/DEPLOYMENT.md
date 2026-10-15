@@ -54,5 +54,13 @@ Useful checks: `systemctl status pizza-ranch-seating pizza-ranch-seating-web`, `
 For an administrator-requested immediate update, use `sudo flock /run/lock/pizza-ranch-seating-update.lock python3 /opt/pizza-ranch-seating/current/local/update.py --force`. This briefly restarts seating even during service. It preserves the database and retains archive verification, backup, health checks, and rollback. The scheduled timer continues to wait for clear service. Deploy code through the GitHub release rather than editing the installed Pi files.
 
 ## Pilot acceptance
+### Immediate seating and forecasts
+
+Use **Seat now** on the floor toolbar, enter the party size and optional name, choose an open recommendation, and confirm seating. This creates a seated party in one saved action; no waitlist entry is required. Suggestions and the server respect existing waiting parties, whole-room holds, approved combinations, capacity, and upcoming bookings.
+
+In **Areas & rooms**, mark each appropriate area **Accessibility preferred / closer to buffet** and save. This applies only to the selected store. A guest's accessibility preference is available in host entry and QR check-in. Marked areas are prioritized for that guest, including an expected fit within 15 additional minutes; Seat now still offers other open fits for host review. These are seating preferences, not a guarantee of physical accessibility. Confirm suitability with the guest.
+
+**Expected next** shows estimated fits within 30 minutes after the current queue, using elapsed dining time plus cleaning. The automatic dining estimate is the mean of up to 30 recent completed visits of 15–180 minutes, including unnamed tables marked in use and later cleared. Three samples are required; otherwise it uses 60 minutes dining and 5 minutes cleaning. Host assumptions remain available in Waitlist view; **Use recent average** returns to automatic estimates. Predictions never clear or reserve an occupied table automatically.
+
 
 Use two real iPads: add a guest from one and observe it on the other; race two parties for the same table; test PIN lockout and role restrictions; unplug only the internet uplink while keeping Wi-Fi/ethernet powered; verify public QR submissions fail and host additions continue; reconnect and verify no duplicates or lost updates; restart the Pi and confirm saved state; test room cleanup, pulse acknowledgment and Home Screen launch in both orientations. Browser emulation does not replace these device/network checks.

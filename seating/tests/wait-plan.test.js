@@ -29,7 +29,7 @@ test('unknown capacities, impossible fits, invalid sizes and groups are handled 
  const state={tables:[table('unknown',null),table('a',4,{group:'g'}),table('b',4,{group:'g',status:'in_use',seatedAt:now})],parties:[party('first',4)]};
  const plan=planWaitlist(state,now);assert.equal(plan.rows[0].estimate.ready,false);assert.equal(plan.rows[0].estimate.tables.length,2);assert.equal(estimateNewParty(plan,20),null);assert.equal(estimateNewParty(plan,0),null);assert.equal(estimateNewParty(plan,2.5),null);assert.equal(waitRange(null),'Host review needed');
 });
-test('recent visit median informs estimates unless host sets an assumption',()=>{
+test('recent visit average informs estimates unless host sets an assumption',()=>{
  const state={parties:[30,45,60,1000].map((n,i)=>({status:'completed',seatedAt:1000,closedAt:1000+n*60000}))};assert.equal(waitSettings(state).diningMinutes,45);state.waitSettings={diningMinutes:70,cleaningMinutes:0};assert.equal(waitSettings(state).diningMinutes,70);assert.equal(waitSettings(state).cleaningMinutes,0);
 });
 test('assumptions require write access and valid durations; cleaning timestamps retain start time',()=>{

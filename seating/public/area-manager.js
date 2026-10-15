@@ -20,7 +20,9 @@ export async function manageAreas({getState,locationName,save}){
   list.replaceChildren(...areas.map(a=>{
    const row=el('div',null,{class:'area-edit-row'}),input=el('input',null,{maxlength:40,'aria-label':`Name for ${a.name}`}),type=types();input.value=a.name;type.value=a.kind;type.setAttribute('aria-label',`Type for ${a.name}`);
    const tables=state.tables.filter(t=>t.area===a.id),info=el('small',`${tables.length} tables · ${tables.reduce((sum,t)=>sum+(t.capacity||0),0)} confirmed seats`),update=el('button','Save',{type:'button','aria-label':`Save ${a.name}`}),remove=el('button','Remove',{type:'button',class:'quiet danger','aria-label':`Remove ${a.name}`});
-   update.onclick=()=>change({type:'saveArea',id:a.id,name:input.value,kind:type.value});remove.onclick=()=>change({type:'deleteArea',id:a.id});row.append(input,type,update,remove,info);return row;
+   const preferred=el('input',null,{type:'checkbox','aria-label':`Accessibility preferred for ${a.name}`});preferred.checked=!!a.accessiblePreferred;
+   const preference=el('label',null,{class:'equipment-toggle area-accessibility'});preference.append(preferred,document.createTextNode('Accessibility preferred / closer to buffet'));
+   update.onclick=()=>change({type:'saveArea',id:a.id,name:input.value,kind:type.value,accessiblePreferred:preferred.checked});remove.onclick=()=>change({type:'deleteArea',id:a.id});row.append(input,type,update,remove,info,preference);return row;
   }));
   combos.replaceChildren(...roomCombinations(state).map(c=>{const row=el('div',null,{class:'area-combo-row'}),title=c.areas.map(id=>areaName(state,id)).join(' + '),remove=el('button','Remove',{type:'button','aria-label':`Remove combination ${title}`});remove.onclick=()=>change({type:'deleteRoomCombination',id:c.id});row.append(el('span',title),remove);return row;}));
   const rooms=areas.filter(a=>a.kind==='room');choices.replaceChildren(...rooms.map(a=>{const l=el('label',null),check=el('input',null,{type:'checkbox',value:a.id});l.append(check,document.createTextNode(a.name));return l;}));comboSave.disabled=rooms.length<2;

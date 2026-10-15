@@ -1,7 +1,8 @@
 // Static files only. Never cache API responses, floor plans, PINs or guest records.
-const CACHE='seating-shell-285edff7c96b';
+const CACHE='seating-shell-aa15bcbf0c1f';
 const ASSETS=['/','/index.html','/style.css','/app.js','/floor.js','/areas.js','/rooms.js','/plan-cleanup.js','/area-manager.js','/floor-import.js','/plan-detection.js','/combinations.js','/suggestions.js','/wait-plan.js','/ready-alert.js','/device.js','/manifest.webmanifest','/app-icon.svg','/apple-touch-icon.png'];
 ASSETS.push('/plan-fit.js');
+ASSETS.push('/accessibility.js');
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('seating-shell-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{

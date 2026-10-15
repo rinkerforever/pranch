@@ -4,7 +4,8 @@ import {drawingBounds,fullPlanBox} from './plan-fit.js';
 import {readyTracker} from './ready-alert.js';
 import {installApp,runtimeInfo,pairLocalServer,layoutSettings} from './device.js';
 import {roomInfo,activeRoomBlocks,scheduledRooms,walkInTables} from './rooms.js';
-import {planWaitlist,estimateNewParty,waitRange} from './wait-plan.js';
+import {planWaitlist,estimateNewParty,seatingOptions,waitRange} from './wait-plan.js';
+import {preferredAreas,preferredSeating} from './accessibility.js';
 import {presetCombinations,includesBoothCombination,childBoothFit} from './combinations.js';
 import { suggestTables } from './suggestions.js';
 import { WALL_PATH, ROOM_LABELS, DOORS, upgradeNumbering, openSeats } from './floor.js';
@@ -15,6 +16,7 @@ let demoModel;
 let runtime={mode:'cloud'},transportReady=false,connection=null,alerts=readyTracker();
 let backgroundFit=null,viewFitted=true;
 let combining=false;
+let seatNowMode=false,guestAdviceKey='';
 installApp();
 const names={open:'Open',in_use:'In use',cleaning:'Cleaning',reserved:'Room held'};
 function el(tag,attrs={},text){const n=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(k==='class')n.className=v;else n.setAttribute(k,v);}if(text!==undefined)n.textContent=text;return n;}
@@ -67,7 +69,7 @@ async function refresh(force=false){
     connection=data.connection;transportReady=!connection?.requiresRecovery&&!(runtime.mode!=='local'&&connection?.mode==='local'&&!connection.online);
     if(force||data.version!==version||role!==data.role){state=presetCombinations(upgradeNumbering(data.state));version=data.version;role=data.role;if(force&&(state.background?.imported||state.areaConfig))viewBox=importedViewBox(view);selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
     else if(!editing){renderWait();renderSelection();renderRoomBookings();}
-    connectionStatus(data.connection);showReadyAlert();
+    connectionStatus(data.connection);showReadyAlert();if($('guest-dialog').open)renderGuestQuote();
   }catch(e){transportReady=false;showReadyAlert();sync(false,'Disconnected · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(force)toast(e.message,true);}
 }
 async function act(action){
@@ -77,7 +79,7 @@ async function act(action){
     state=presetCombinations(upgradeNumbering(data.state));version=data.version;if(demo)localStorage.setItem('seating-preview',JSON.stringify(state));
     if(action.type==='seat'||action.type==='cancelParty')partyId=null;
     selected=new Set([...selected].filter(id=>!releasedTables.includes(id)&&state.tables.some(t=>t.id===id)));
-    if(['status','seat','combine'].includes(action.type)){selected.clear();combining=false;closeSidebar();}
+    if(['status','seat','seatNow','combine'].includes(action.type)){selected.clear();combining=false;closeSidebar();}
     render();connectionStatus();showReadyAlert();return true;
   }catch(e){toast(e.message,true);sync(false,'Change not saved');if(e.status===409){busy=false;await refresh(true);}if(e.status===401){$('app').hidden=true;$('login').hidden=false;}return false;}finally{busy=false;$('location').disabled=false;}
 }
@@ -176,8 +178,29 @@ function renderFloor(){
 let planCache=null,planState=null,planMinute=-1;
 function currentPlan(){const minute=Math.floor(Date.now()/60000);if(planState!==state||planMinute!==minute){planCache=planWaitlist(state);planState=state;planMinute=minute;}return planCache;}
 function chooseWaitingParty(p,tables=[]){combining=false;partyId=p.id;selected=new Set(tables.map(t=>t.id));editing=false;if(tables.length)setView(tables[0].area);render();showSidebar(tables.length?'details':'waiting');}
-function renderQuote(){if(!state)return;const estimate=estimateNewParty(currentPlan(),Number($('estimate-size').value));$('estimate-result').textContent=waitRange(estimate);}
-function renderGuestQuote(){if(!state)return;const size=Number($('guest-size').value),plan=currentPlan();const estimate=editGuest?plan.rows.find(r=>r.party.id===editGuest&&r.party.size===size)?.estimate:estimateNewParty(plan,size);$('guest-estimate').textContent=editGuest&&!estimate?'Updated estimate appears after saving.':`Estimated wait: ${waitRange(estimate)}. Based on the current queue; timing may change.`;}
+function renderQuote(){if(!state)return;const estimate=estimateNewParty(currentPlan(),Number($('estimate-size').value),{accessibility:$('estimate-accessibility').checked});$('estimate-result').textContent=waitRange(estimate);}
+function renderGuestQuote(){
+ if(!state)return;const size=Number($('guest-size').value),preferences={accessibility:$('guest-accessibility').checked},plan=currentPlan();
+ const key=[version,size,preferences.accessibility,seatNowMode,Math.floor(Date.now()/60000)].join('|');if(key===guestAdviceKey)return;guestAdviceKey=key;
+ const estimate=editGuest?plan.rows.find(r=>r.party.id===editGuest&&r.party.size===size&&!!r.party.accessibility===preferences.accessibility)?.estimate:estimateNewParty(plan,size,preferences);
+ const basis=`${plan.settings.diningMinutes} min dining + ${plan.settings.cleaningMinutes} min cleaning · ${plan.settings.source}${plan.settings.sampleCount?' · '+plan.settings.sampleCount+' completed visits':''}.`;
+ $('guest-estimate').textContent=(seatNowMode?'':editGuest&&!estimate?'Updated estimate appears after saving. ':`Estimated wait: ${waitRange(estimate)}. `)+basis+(preferences.accessibility&&preferredAreas(state).size===0?' No preferred areas configured yet; confirm suitable seating with the guest.':'');
+ if(!seatNowMode)return;
+ const options=seatingOptions(plan,size,preferences),previous=$('seat-now-options').querySelector('input:checked')?.value;
+ $('seat-now-options').replaceChildren(...options.open.map((option,i)=>{
+  const row=el('label',{class:'seat-now-option'}),radio=el('input',{type:'radio',name:'seat-now-table',value:JSON.stringify(option.tables.map(t=>t.id))}),text=el('span');
+  radio.checked=previous?previous===radio.value:i===0;
+  text.append(el('strong',{},option.tables.map(label).join(' + ')),el('small',{},`${option.capacity} seats · ${option.accessiblePreferred?'Accessibility-preferred area · ':''}${includesBoothCombination(option.tables)?'Includes booth · confirm fit':'Open now'}`));row.append(radio,text);return row;
+ }));
+ if(!options.open.length)$('seat-now-options').append(el('p',{class:'empty'},'No suitable open table after the current queue. Add this party to the waitlist or adjust the party size.'));
+ $('guest-save').disabled=!canWrite()||!options.open.length;
+ $('seat-now-soon').replaceChildren(...options.soon.map(option=>{
+  const row=el('p',{class:'forecast-option'}),occupied=option.tables.map(t=>state.tables.find(o=>o.id===t.id)).filter(t=>t?.status==='in_use'&&t.seatedAt),elapsed=occupied.length?Math.round(Math.max(...occupied.map(t=>(Date.now()-t.seatedAt)/60000))):null;
+  row.append(el('strong',{},option.tables.map(label).join(' + ')),el('span',{},` · ${waitRange(option)}${option.accessiblePreferred?' · Accessibility preferred':''}${elapsed!==null?' · Current guests seated '+elapsed+' min':''}`));return row;
+ }));
+ if(!options.soon.length)$('seat-now-soon').append(el('p',{class:'muted'},estimate&&!estimate.ready?`Next estimated fit: ${waitRange(estimate)}.`:'No additional fit expected within 30 minutes.'));
+ $('seat-now-soon').append(el('p',{class:'muted'},'Forecasts include the current queue. Occupied or cleaning tables must be cleared by staff before seating; estimates do not reserve a table.'));
+}
 function renderWaitlistView(){
  if(!$('waitlist-dialog').open)return;
  const plan=currentPlan(),rows=plan.rows,ready=rows.filter(r=>r.estimate?.ready).length;
@@ -188,10 +211,12 @@ function renderWaitlistView(){
  $('waitlist-rows').replaceChildren(...rows.map(({party:p,estimate,combinationPriority},i)=>{
   const row=el('tr',{class:estimate?.ready?'ready-row':''}),guest=el('td'),wait=el('td',{},`${minutes(p.arrivedAt)} min`),eta=el('td'),table=el('td'),action=el('td');
   guest.append(el('strong',{},`${i+1}. ${p.name}`),el('small',{},`${p.size} guests${p.highChair?' · High chair':''}${p.booster?' · Booster':''}`));
+  if(p.accessibility)guest.append(el('small',{},'Accessibility-preferred seating'));
   if(p.notes)guest.append(el('small',{},p.notes));
   if(combinationPriority)guest.append(el('span',{class:'combination-tag'},'Combination priority'));
   eta.append(el('strong',{},waitRange(estimate)));
   table.append(el('span',{},estimate?estimate.tables.map(label).join(' + '):'No configured fit'));
+  if(estimate?.accessiblePreferred)table.append(el('small',{},'Accessibility-preferred area'));
   if(estimate&&includesBoothCombination(estimate.tables))table.append(el('small',{},'Includes booth · confirm fit'));
   const button=el('button',{class:estimate?.ready?'primary small':'small'},estimate?.ready?'Review & seat':'View options');button.onclick=()=>{$('waitlist-dialog').close();chooseWaitingParty(p,estimate?.ready?estimate.tables:[]);};action.append(button);
   row.append(guest,wait,eta,table,action);return row;
@@ -208,7 +233,7 @@ function renderWait(){
     const meta=el('div',{class:'guest-meta'});meta.append(el('span',{},`${p.size} guests`),el('span',{},`${minutes(p.arrivedAt)} min wait`));row.append(main,meta);
     row.append(el('p',{class:'wait-estimate'},waitRange(planned?.estimate)));if(planned?.combinationPriority)row.append(el('span',{class:'combination-tag'},'Combination priority'));
     if(p.source==='qr')row.append(el('small',{class:'qr-source'},p.readyAt?'QR guest · Ready — return to host':'QR guest check-in'));
-    if(p.highChair||p.booster)row.append(el('p',{class:'equipment-badges'},[p.highChair?'High chair':null,p.booster?'Booster seat':null].filter(Boolean).join(' · ')));
+    if(p.highChair||p.booster||p.accessibility)row.append(el('p',{class:'equipment-badges'},[p.highChair?'High chair':null,p.booster?'Booster seat':null,p.accessibility?'Accessible seating preferred':null].filter(Boolean).join(' · ')));
     if(p.notes)row.append(el('p',{class:'guest-note'},p.notes));
     const choose=()=>{combining=false;partyId=p.id;selected.clear();renderWait();renderSelection();renderRecommendations();renderFloor();$('recommend-panel').scrollIntoView({block:'nearest',behavior:'smooth'});};const fit=ready?planned.estimate.tables:null;const fitButton=el('button',{class:'guest-fit',type:'button'},fit?`Suggested: ${fit.map(label).join(' + ')} · View options`:'Find tables');fitButton.onclick=e=>{e.stopPropagation();choose();};row.append(fitButton);row.onclick=choose;row.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();choose();}};
     if(partyId===p.id&&canWrite()){
@@ -221,10 +246,11 @@ function renderSelection(){
   const box=$('selection-body'),tables=current(),party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');const overrideKey=JSON.stringify([party?.id,party?.size,tables.map(t=>[t.id,t.capacity,t.status])]),keepOverride=box.dataset.overrideKey===overrideKey&&!!box.querySelector('#child-override')?.checked;box.dataset.overrideKey=overrideKey;box.replaceChildren();$('selection-title').textContent=party?`Seat ${party.name}`:'Table details';
   if(!canWrite())box.append(el('p',{class:'read-only-note'},'View-only access. Ask an administrator for host access to make changes.'));
   if(party)box.append(el('p',{class:'muted'},`${party.size} guests · Choose a table below or tap tables on the floor.`));
+  if(party?.accessibility)box.append(el('p',{class:'equipment-badges'},'Accessible seating preferred · confirm fit and route with the guest.'));
   if(!tables.length){box.append(el('div',{class:'empty'},party?'Choose a suggestion or select tables on the floor.':'Select a table to see seats, status, and available actions.'));return;}
   const summary=el('div',{class:'selection-summary'}),capacity=tables.reduce((n,t)=>n+(t.capacity||0),0),unknown=tables.some(t=>!t.capacity);
   summary.append(el('strong',{},tables.map(label).join(' + ')),el('p',{},unknown?'Capacity unconfirmed':`${capacity} seats total`));
-  for(const t of tables){const p=state.parties.find(p=>p.id===t.party);summary.append(el('p',{},`${label(t)} · ${names[t.status]}${t.seatedAt?' · '+minutes(t.seatedAt)+' min':''}${p?' · '+p.name+' ('+p.size+')'+(p.highChair?' · High chair':'')+(p.booster?' · Booster':'')+(p.childOverride?' · Child override':''):''}`));}box.append(summary);
+  for(const t of tables){const p=state.parties.find(p=>p.id===t.party);summary.append(el('p',{},`${label(t)} · ${names[t.status]}${t.seatedAt?' · '+minutes(t.seatedAt)+' min':''}${p?' · '+p.name+' ('+p.size+')'+(p.highChair?' · High chair':'')+(p.booster?' · Booster':'')+(p.accessibility?' · Accessible seating':'')+(p.childOverride?' · Child override':''):''}`));}box.append(summary);
   if(tables.some(t=>t.roomBlock)){const b=el('button',{class:'primary wide'},'Manage whole-room booking');b.onclick=openRoomBookings;box.append(el('p',{class:'combination-notice'},'These tables belong to a whole-room block.'),b);return;}
   if(!canWrite())return;
   const boothNotice='This combination includes a fixed booth. Confirm the nearby table works for this party and leaves the aisle clear.';
@@ -252,11 +278,12 @@ function renderSelection(){
 }
 function renderRecommendations(){
   const party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');$('recommend-panel').hidden=editing;$('recommend-context').textContent=party?`${party.name} · ${party.size} guests — best fits first`:'Select a waiting party to find an open table that fits.';if(!party){$('recommendations').replaceChildren();return;}
-  const candidates=suggestTables(walkInTables(state),party.size);
+  const candidates=suggestTables(walkInTables(state,Date.now(),currentPlan().context.duration),party.size,5,party.accessibility?preferredAreas(state):new Set());
   const planned=currentPlan().rows.find(r=>r.party.id===party.id)?.estimate;
   if(planned?.ready){const key=ts=>ts.map(t=>t.id).sort().join('|'),index=candidates.findIndex(ts=>key(ts)===key(planned.tables));if(index>=0)candidates.splice(index,1);candidates.unshift(planned.tables);}
   candidates.push(...state.tables.filter(t=>t.status==='open'&&!t.group&&childBoothFit([t],party.size)).slice(0,2).map(t=>[t]));
   $('recommendations').replaceChildren(...candidates.map(ts=>{const b=el('button',{class:'suggestion'}),info=el('span');info.append(el('strong',{},ts.map(label).join(' + ')),el('small',{},`${ts.reduce((n,t)=>n+t.capacity,0)} seats · ${childBoothFit(ts,party.size)?'Small-child override required':includesBoothCombination(ts)?'Booth + table · confirm fit':ts.length>1?'Nearby combination':'Open table'}`));b.append(info,el('span',{},'→'));b.onclick=()=>{combining=false;selected=new Set(ts.map(t=>t.id));setView(ts[0].area);renderFloor();renderSelection();showSidebar('details');};return b;}));
+  if(planned&&!planned.ready)$('recommendations').append(el('p',{class:'estimate-note'},`Expected next: ${planned.tables.map(label).join(' + ')} · ${waitRange(planned)}${planned.accessiblePreferred?' · Accessibility preferred':''}. Host must confirm the table is clear.`));
   if(!candidates.length)$('recommendations').append(el('p',{class:'empty'},'No available fit. A manager can confirm booth capacities or approve table combinations in Layout editor.'));
 }
 function importedViewBox(value){
@@ -283,6 +310,7 @@ function renderAllowed(allowed=[]){const area=$('table-area').value,kind=$('tabl
 }
 function render(){
   $('clean-plan').hidden=!state.background;
+  $('seat-now-open').hidden=editing||!canWrite();
   $('guest-checkin').hidden=!canWrite();$('areas-open').hidden=!canEdit();
   $('phone-location').textContent=locations.find(l=>l.id===locationId)?.name||'';
   $('edit-tab').hidden=!canEdit();if(!canEdit())editing=false;$('tablet-wait').hidden=editing;
@@ -291,7 +319,13 @@ function render(){
   renderAreas();renderFloor();renderWait();renderSelection();renderRecommendations();renderRoomBookings();showReadyAlert();
   // Keep unsaved layout fields intact while live state polls update the floor.
 }
-function openGuest(p=null){editGuest=p?.id||null;$('guest-title').textContent=p?'Edit waiting party':'Add guests';$('guest-name').value=p?.name||'';$('guest-size').value=p?.size||2;$('guest-notes').value=p?.notes||'';$('guest-highchair').checked=!!p?.highChair;$('guest-booster').checked=!!p?.booster;renderGuestQuote();$('guest-dialog').showModal();$('guest-name').focus();}
+function openGuest(p=null,immediate=false){
+ seatNowMode=immediate&&!p;guestAdviceKey='';editGuest=p?.id||null;
+ $('guest-title').textContent=p?'Edit waiting party':seatNowMode?'Seat guests now':'Add guests';
+ $('guest-name').value=p?.name||'';$('guest-name').required=!seatNowMode;$('guest-name').placeholder=seatNowMode?'Walk-in (name optional)':'';
+ $('guest-size').value=p?.size||2;$('guest-notes').value=p?.notes||'';$('guest-highchair').checked=!!p?.highChair;$('guest-booster').checked=!!p?.booster;$('guest-accessibility').checked=!!p?.accessibility;
+ $('guest-save').textContent=seatNowMode?'Seat at selected table':'Save to waiting list';$('guest-save').disabled=false;$('seat-now-panel').hidden=!seatNowMode;$('seat-now-wait').hidden=!seatNowMode;$('seat-now-options').replaceChildren();renderGuestQuote();$('guest-dialog').showModal();$('guest-size').focus();
+}
 $('login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;$('login-error').textContent='';try{await api('/api/login',{method:'POST',body:JSON.stringify(runtime.mode==='local'?{pin:$('local-pin').value}:{email:$('email').value,password:$('password').value})});$('password').value='';$('local-pin').value='';await loadSession();}catch(error){$('login-error').textContent=error.message;}finally{b.disabled=false;}};
 $('logout').onclick=async()=>{if(!demo)await api('/api/logout',{method:'POST'});locationId=null;state=null;transportReady=false;alerts=readyTracker();showReadyAlert();$('app').hidden=true;$('login').hidden=false;if(demo)location.href='/';};
 $('location').onchange=async()=>{combining=false;locationId=$('location').value;role=locations.find(l=>l.id===locationId).role;selected.clear();partyId=null;tableDraft=null;editing=false;version=-1;alerts=readyTracker();await refresh(true);};
@@ -301,7 +335,20 @@ $('tablet-wait').onclick=()=>showSidebar('waiting');$('tablet-details').onclick=
 $('add-guest').onclick=()=>openGuest();$('clear-selection').onclick=()=>{selected.clear();renderFloor();renderSelection();};
 $('combine-select').onclick=()=>{if(busy||!canWrite())return;if(combining){if(selected.size>=2)showSidebar('details');return;}combining=true;selected.clear();closeSidebar();renderFloor();renderSelection();toast('Tap the open tables you want to combine, then tap Review.');};
 $('combine-cancel').onclick=()=>{combining=false;selected.clear();closeSidebar();renderFloor();renderSelection();};
-$('guest-form').onsubmit=async e=>{e.preventDefault();e.submitter.disabled=true;const ok=await act({type:editGuest?'editParty':'addParty',id:editGuest,name:$('guest-name').value,size:Number($('guest-size').value),notes:$('guest-notes').value,highChair:$('guest-highchair').checked,booster:$('guest-booster').checked});e.submitter.disabled=false;if(ok){$('guest-dialog').close();toast(editGuest?'Party updated.':'Added to waiting list.');}};
+$('seat-now-open').onclick=()=>{if(canWrite())openGuest(null,true);};
+$('seat-now-wait').onclick=()=>{seatNowMode=false;guestAdviceKey='';$('guest-title').textContent='Add guests';$('guest-name').required=true;$('guest-save').textContent='Save to waiting list';$('guest-save').disabled=false;$('seat-now-panel').hidden=true;$('seat-now-wait').hidden=true;renderGuestQuote();};
+$('guest-form').onsubmit=async e=>{
+ e.preventDefault();if(busy)return;
+ const action={type:seatNowMode?'seatNow':editGuest?'editParty':'addParty',id:editGuest,name:$('guest-name').value,size:Number($('guest-size').value),notes:$('guest-notes').value,highChair:$('guest-highchair').checked,booster:$('guest-booster').checked,accessibility:$('guest-accessibility').checked};
+ if(seatNowMode){
+  const checked=$('seat-now-options').querySelector('input:checked');if(!checked){toast('Choose an open table first.',true);return;}
+  action.ids=JSON.parse(checked.value);const tables=state.tables.filter(t=>action.ids.includes(t.id));action.boothAcknowledged=includesBoothCombination(tables);
+  if(action.boothAcknowledged&&!await confirmChange('Confirm booth combination','This includes a fixed booth. Confirm the fit and clear aisle before seating.'))return;
+ }
+ e.submitter.disabled=true;
+ try{if(await act(action)){$('guest-dialog').close();toast(seatNowMode?'Party seated.':editGuest?'Party updated.':'Added to waiting list.');}}
+ finally{e.submitter.disabled=false;guestAdviceKey='';if($('guest-dialog').open)renderGuestQuote();}
+};
 for(const b of document.querySelectorAll('.close-dialog'))b.onclick=()=>b.closest('dialog').close();
 $('add-table').onclick=()=>{showSidebar('details');tableDraft={area:areaOptions(state).some(a=>a.id===view)?view:areaOptions(state)[0]?.id,number:'',capacity:4,kind:'table',orientation:'lr',x:Math.round(viewBox[0]+viewBox[2]/2),y:Math.round(viewBox[1]+viewBox[3]/2),allowed:[]};selected.clear();renderEditor();$('table-number').focus();};
 $('table-area').onchange=()=>renderAllowed();$('table-kind').onchange=()=>renderAllowed();
@@ -373,9 +420,11 @@ $('checkin-form').onsubmit=async e=>{e.preventDefault();const button=$('checkin-
 
 $('preset-combinations').onclick=async()=>{if(await confirmChange('Preset nearby combinations?','Add links between neighboring tables in this sectioned floor plan. Existing links stay available. Booth combinations require a notice before use. Review links after moving tables or uploading a different plan.')){if(await act({type:'presetCombinations'})){tableDraft=null;render();toast('Nearby combinations are ready.');}}};
 
-$('waitlist-open').onclick=()=>{if(!state)return;const settings=currentPlan().settings;$('dining-minutes').value=settings.diningMinutes;$('cleaning-minutes').value=settings.cleaningMinutes;for(const id of ['dining-minutes','cleaning-minutes','wait-settings-save'])$(id).disabled=!canWrite();$('waitlist-dialog').showModal();renderWaitlistView();};
-$('estimate-size').oninput=renderQuote;$('guest-size').addEventListener('input',renderGuestQuote);
-$('wait-settings-form').onsubmit=async e=>{e.preventDefault();$('wait-settings-save').disabled=true;try{if(await act({type:'waitSettings',diningMinutes:Number($('dining-minutes').value),cleaningMinutes:Number($('cleaning-minutes').value)}))toast('Wait estimate assumptions saved.');}finally{$('wait-settings-save').disabled=!canWrite();}};
+$('waitlist-open').onclick=()=>{if(!state)return;const settings=currentPlan().settings;$('dining-minutes').value=settings.diningMinutes;$('cleaning-minutes').value=settings.cleaningMinutes;for(const id of ['dining-minutes','cleaning-minutes','wait-settings-save','wait-settings-auto'])$(id).disabled=!canWrite();$('waitlist-dialog').showModal();renderWaitlistView();};
+$('estimate-size').oninput=renderQuote;$('estimate-accessibility').onchange=renderQuote;
+for(const id of ['guest-size','guest-accessibility'])$(id).addEventListener(id==='guest-size'?'input':'change',()=>{guestAdviceKey='';$('seat-now-options').replaceChildren();renderGuestQuote();});
+$('wait-settings-auto').onclick=async()=>{if(await act({type:'waitSettings',automatic:true})){const settings=currentPlan().settings;$('dining-minutes').value=settings.diningMinutes;$('cleaning-minutes').value=settings.cleaningMinutes;toast('Estimates will use the recent dining average when at least 3 visits are recorded.');}};
+$('wait-settings-form').onsubmit=async e=>{e.preventDefault();$('wait-settings-save').disabled=true;try{if(await act({type:'waitSettings',diningMinutes:Number($('dining-minutes').value),cleaningMinutes:Number($('cleaning-minutes').value)}))toast('Wait estimate assumptions saved.');}finally{$('wait-settings-save').disabled=!canWrite();$('wait-settings-auto').disabled=!canWrite();}};
 
 function roomCapacityText(info){return `${info.capacity} seats${info.unconfirmed?' + unconfirmed capacity':''}`;}
 function updateRoomBookingForm(){

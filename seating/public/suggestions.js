@@ -1,3 +1,4 @@
+import {preferredSeating} from './accessibility.js';
 // Suggestions never split an existing group and only join mutually approved neighbors.
 export function combinationCandidates(tables){
   const open=tables.filter(t=>t.status==='open'&&t.capacity),results=[],seen=new Set();
@@ -7,9 +8,9 @@ export function combinationCandidates(tables){
   for(let i=0;i<results.length&&i<2000;i++){const ts=results[i];for(const unit of units){if(ts.length+unit.length>4||unit.some(t=>ts.includes(t)||t.area!==ts[0].area))continue;if(unit.some(t=>ts.some(o=>o.allowed.includes(t.id)&&t.allowed.includes(o.id))))add([...ts,...unit]);}}
   return results;
 }
-export function suggestTables(tables,size,limit=5){
+export function suggestTables(tables,size,limit=5,preferred=new Set()){
   if(!Number.isInteger(size)||size<1)return [];
   const results=combinationCandidates(tables);
   const capacity=ts=>ts.reduce((sum,t)=>sum+t.capacity,0);
-  return results.filter(ts=>capacity(ts)>=size).sort((a,b)=>capacity(a)-capacity(b)||a.length-b.length).slice(0,limit);
+  return results.filter(ts=>capacity(ts)>=size).sort((a,b)=>Number(preferredSeating(b,preferred))-Number(preferredSeating(a,preferred))||capacity(a)-capacity(b)||a.length-b.length).slice(0,limit);
 }

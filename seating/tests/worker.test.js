@@ -10,6 +10,15 @@ function fixture(){
   const env={DB,SUPABASE_URL:'https://auth.example.test',SUPABASE_PUBLISHABLE_KEY:'public',ASSETS:{fetch:()=>new Response('page')}};
   return{sqlite,env,async call(path,body,token='admin',origin='https://seating.example.test'){return worker.fetch(new Request('https://seating.example.test'+path,{method:body?'POST':'GET',headers:{cookie:`seat_access=${token}`,origin,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),env,{waitUntil(){}});}};
 }
+test('competing Seat now requests commit one seated party and preserve accessibility preferences',async t=>{
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
+ const f=fixture();t.after(()=>f.sqlite.close());const first=await(await f.call('/api/locations/loc/state')).json();
+ const table=first.state.tables.find(t=>t.status==='open'&&t.capacity>=4&&t.kind==='table');
+ const body={version:first.version,action:{type:'seatNow',name:'Walk-in family',size:4,ids:[table.id],accessibility:true}};
+ const responses=await Promise.all([f.call('/api/locations/loc/actions',body),f.call('/api/locations/loc/actions',body)]);
+ assert.deepEqual(responses.map(r=>r.status).sort(),[200,409]);
+ const final=await(await f.call('/api/locations/loc/state')).json();assert.equal(final.state.parties.length,1);assert.equal(final.state.parties[0].status,'seated');assert.equal(final.state.parties[0].accessibility,true);assert.equal(final.state.tables.find(t=>t.id===table.id).status,'in_use');
+});
 test('API enforces auth, origin, location access and viewer read-only',async t=>{
   t.mock.method(globalThis,'fetch',async(url,options)=>new Response(JSON.stringify({id:options.headers.authorization==='Bearer viewer'?'auth-viewer':'auth-admin'}),{status:options.headers.authorization==='Bearer bad'?401:200}));
   const f=fixture();assert.equal((await f.call('/api/session',null,'bad')).status,401);
@@ -107,7 +116,7 @@ test('reviewed floor import is atomic, location-scoped, versioned and manager-on
  t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-viewer'})));
  assert.equal((await upload(1)).status,403);assert.equal(old.state.tables.length,68);f.sqlite.close();
 });
-const guestJoin={action:'join',name:'Guest One',size:4,notes:'High chair',website:'',highChair:true,booster:true};
+const guestJoin={action:'join',name:'Guest One',size:4,notes:'High chair',website:'',highChair:true,booster:true,accessibility:true};
 test('guest check-in is closed by default, scoped to an active location and enforces origin and size',async t=>{
  t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
  const f=fixture(),first=await guestCall(f),token=first.headers.get('set-cookie').split(';')[0];
@@ -127,7 +136,7 @@ test('concurrent duplicate submissions create one party and private status expos
  const first=await guestCall(f),token=first.headers.get('set-cookie').split(';')[0];
  const results=await Promise.all([guestCall(f,{token,body:guestJoin}),guestCall(f,{token,body:guestJoin})]);
  assert.deepEqual(results.map(r=>r.status),[200,200]);
- let staff=await(await f.call('/api/locations/loc/state')).json();assert.equal(staff.state.parties.length,1);assert.equal(staff.state.parties[0].source,'qr');assert.equal(staff.state.parties[0].highChair,true);assert.equal(staff.state.parties[0].booster,true);
+ let staff=await(await f.call('/api/locations/loc/state')).json();assert.equal(staff.state.parties.length,1);assert.equal(staff.state.parties[0].source,'qr');assert.equal(staff.state.parties[0].highChair,true);assert.equal(staff.state.parties[0].booster,true);assert.equal(staff.state.parties[0].accessibility,true);
  const second=await guestCall(f),otherToken=second.headers.get('set-cookie').split(';')[0];assert.equal((await second.json()).party,null);
  assert.equal((await guestCall(f,{token:otherToken,body:guestJoin})).status,429);
  const publicData=await(await guestCall(f,{token})).json();assert.deepEqual(Object.keys(publicData.party).sort(),['arrivedAt','name','ready','size','status']);assert.ok(!JSON.stringify(publicData).includes('guestTokenHash'));assert.ok(!JSON.stringify(publicData).includes('High chair'));

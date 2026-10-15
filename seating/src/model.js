@@ -2,12 +2,13 @@ import {roomInfo,activeRoomBlocks,scheduledRooms,roomConflict,protectsBooking} f
 import {areaOptions,roomCombinations} from '../public/areas.js';
 import {presetCombinations,includesBoothCombination,childBoothFit} from '../public/combinations.js';
 import { initialTables } from '../public/floor.js';
+import {waitSettings,planWaitlist} from '../public/wait-plan.js';
 export class AppError extends Error { constructor(message, status=400) { super(message); this.status=status; } }
 const fail = message => { throw new AppError(message); };
 const integer = (v,min,max) => Number.isInteger(v) && v>=min && v<=max;
 function equipment(action,existing={}){
- for(const key of ['highChair','booster'])if(action[key]!==undefined&&typeof action[key]!=='boolean')fail('Choose high chair or booster with the checkboxes.');
- return {highChair:action.highChair??existing.highChair??false,booster:action.booster??existing.booster??false};
+ for(const key of ['highChair','booster','accessibility'])if(action[key]!==undefined&&typeof action[key]!=='boolean')fail('Choose seating needs with the checkboxes.');
+ return {highChair:action.highChair??existing.highChair??false,booster:action.booster??existing.booster??false,accessibility:action.accessibility??existing.accessibility??false};
 }
 const clean = (v,max) => String(v ?? '').trim().slice(0,max);
 export function initialState() { return presetCombinations({ tables:initialTables(), numberingVersion:1, parties:[], background:null, history:[] }); }
@@ -42,12 +43,13 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
     const bookings=[...activeRoomBlocks(state),...scheduledRooms(state).filter(b=>b.endsAt>now)];
     if(type==='saveArea'){
       const name=clean(action.name,40),kind=action.kind;
+      if(action.accessiblePreferred!==undefined&&typeof action.accessiblePreferred!=='boolean')fail('Choose accessibility preference with the checkbox.');
       if(!name||!['section','room'].includes(kind))fail('Enter an area name and choose table section or party room.');
       if(areas.some(a=>a.id!==action.id&&a.name.toLowerCase()===name.toLowerCase()))fail('That area name already exists at this location.');
       if(action.id){const area=areas.find(a=>a.id===action.id);if(!area)fail('Area no longer exists. Reopen Areas & rooms.');
         if(area.kind!==kind&&(bookings.some(b=>b.areas.includes(area.id))||combinations.some(c=>c.areas.includes(area.id))))fail('Release or cancel this room’s bookings and remove its room combinations before changing its type.');
-        Object.assign(area,{name,kind});
-      }else{if(areas.length>=40)fail('Maximum 40 areas per location.');areas.push({id:uuid(),name,kind});}
+        Object.assign(area,{name,kind,accessiblePreferred:action.accessiblePreferred??area.accessiblePreferred??false});
+      }else{if(areas.length>=40)fail('Maximum 40 areas per location.');areas.push({id:uuid(),name,kind,accessiblePreferred:action.accessiblePreferred??false});}
     }else if(type==='deleteArea'){
       if(!areas.some(a=>a.id===action.id))fail('Area no longer exists.');
       if(state.tables.some(t=>t.area===action.id))fail('Move or remove this area’s tables before deleting it.');
@@ -136,8 +138,8 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
       for(const t of tables)Object.assign(t,{status:action.status,roomBlock:null,group:null,party:null,seatedAt:null,cleaningAt:action.status==='cleaning'?now:null});
     }
   } else if(type==='waitSettings') {
-    if(!integer(action.diningMinutes,15,180)||!integer(action.cleaningMinutes,0,30))fail('Use 15–180 minutes for dining and 0–30 minutes for cleaning.');
-    state.waitSettings={diningMinutes:action.diningMinutes,cleaningMinutes:action.cleaningMinutes};
+    if(action.automatic===true)delete state.waitSettings;
+    else{if(!integer(action.diningMinutes,15,180)||!integer(action.cleaningMinutes,0,30))fail('Use 15–180 minutes for dining and 0–30 minutes for cleaning.');state.waitSettings={diningMinutes:action.diningMinutes,cleaningMinutes:action.cleaningMinutes};}
   } else if(type==='presetCombinations') {
     presetCombinations(state,true);
   } else if(type==='guestSettings') {
@@ -162,11 +164,19 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
     const party=state.parties.find(p=>p.id===action.id && p.status==='waiting');
     if(!party) fail('This party is no longer waiting.');
     party.status='cancelled';party.closedAt=now;
+  } else if(type==='seatNow') {
+    const size=Number(action.size);if(!integer(size,1,100))fail('Enter a party size between 1 and 100.');
+    const tables=selectedTables(state,action.ids),plan=planWaitlist(state,now);
+    if(tables.some(t=>(plan.available.get(t.id)??Infinity)>0))fail('These tables are occupied, held, or planned for waiting guests. Choose another recommendation.');
+    const party={id:uuid(),name:clean(action.name,80)||'Walk-in',size,notes:clean(action.notes,300),...equipment(action),arrivedAt:now,status:'waiting',source:'seat-now'};
+    state.parties.push(party);
+    const seated=applyAction(state,{type:'seat',partyId:party.id,ids:action.ids,boothAcknowledged:action.boothAcknowledged,childOverride:action.childOverride},role,now,uuid);
+    seated.history[0].type='seatNow';return seated;
   } else if(type==='seat') {
     const party=state.parties.find(p=>p.id===action.partyId && p.status==='waiting');
     if(!party) fail('This party has already been seated or removed.');
     const tables=selectedTables(state,action.ids);combineCheck(state,tables);
-    if(protectsBooking(state,tables,now,now+((state.waitSettings?.diningMinutes||60)+(state.waitSettings?.cleaningMinutes??5))*60000))fail('These tables are needed for an upcoming room booking. Use Room bookings or choose other tables.');
+    const timing=waitSettings(state);if(protectsBooking(state,tables,now,now+(timing.diningMinutes+timing.cleaningMinutes)*60000))fail('These tables are needed for an upcoming room booking. Use Room bookings or choose other tables.');
     if(tables.some(t=>!t.capacity)) fail('Set the capacity for these booths before assigning a party.');
     if(includesBoothCombination(tables)&&action.boothAcknowledged!==true)fail('Confirm the booth combination notice before seating.');
     const short=tables.reduce((n,t)=>n+t.capacity,0)<party.size;
@@ -188,7 +198,14 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
     if(!['open','in_use','cleaning'].includes(action.status)) fail('Choose a valid status.');
     const tables=selectedTables(state,action.ids);completeGroups(state,tables);
     if(tables.some(t=>t.roomBlock))fail('Manage this whole-room block from Room bookings.');
-    if(action.status==='in_use'&&protectsBooking(state,tables,now,now+((state.waitSettings?.diningMinutes||60)+(state.waitSettings?.cleaningMinutes??5))*60000))fail('These tables are needed for an upcoming room booking.');
+    const timing=waitSettings(state);if(action.status==='in_use'&&protectsBooking(state,tables,now,now+(timing.diningMinutes+timing.cleaningMinutes)*60000))fail('These tables are needed for an upcoming room booking.');
+    if(action.status!=='in_use'){
+      const recorded=new Set();
+      for(const t of tables.filter(t=>t.status==='in_use'&&!t.party&&t.seatedAt)){
+        const key=(t.group||t.id)+'|'+t.seatedAt;if(recorded.has(key))continue;recorded.add(key);
+        const minutes=(now-t.seatedAt)/60000;if(minutes>=15&&minutes<=180)state.diningSamples=[...(state.diningSamples||[]),{minutes,closedAt:now}].slice(-60);
+      }
+    }
     for(const t of tables) {
       if(t.party && action.status!=='in_use') {
         const p=state.parties.find(p=>p.id===t.party);if(p){p.status='completed';p.closedAt=now;}

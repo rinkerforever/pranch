@@ -41,7 +41,7 @@ export async function guestApi(request,env,ctx,url,{json,readBody,cookies,saveSt
      const recent=(state.guestJoins||[]).filter(j=>now-j.at<3600000),same=recent.filter(j=>j.ipHash===ipHash);
      if(same.length>=120||same.filter(j=>now-j.at<600000).length>=30||same.some(j=>now-j.at<3000)||recent.filter(j=>now-j.at<600000).length>=60)throw new AppError('Too many check-ins. Please see the host or try again later.',429);
      const partyId=crypto.randomUUID();
-     state=applyAction(state,{type:'addParty',name:body.name,size:body.size,notes:body.notes,highChair:body.highChair,booster:body.booster},'host',now,()=>partyId);
+     state=applyAction(state,{type:'addParty',name:body.name,size:body.size,notes:body.notes,highChair:body.highChair,booster:body.booster,accessibility:body.accessibility},'host',now,()=>partyId);
      Object.assign(state.parties.find(p=>p.id===partyId),{source:'qr',guestTokenHash:tokenHash});
      state.guestJoins=[...recent,{ipHash,at:now}];
    }else throw new AppError('Invalid request.');

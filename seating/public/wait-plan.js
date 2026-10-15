@@ -1,12 +1,14 @@
 import {scheduledRooms,overlaps} from './rooms.js';
 import {combinationCandidates} from './suggestions.js';
+import {preferredAreas,preferredSeating} from './accessibility.js';
 const capacity=ts=>ts.reduce((n,t)=>n+t.capacity,0);
 export function waitSettings(state){
- const samples=state.parties.filter(p=>p.status==='completed'&&p.seatedAt&&p.closedAt>p.seatedAt).map(p=>(p.closedAt-p.seatedAt)/60000).filter(n=>n>=15&&n<=180).slice(-30).sort((a,b)=>a-b);
- const observed=samples.length>=3?Math.round(samples[Math.floor(samples.length/2)]):null;
- return {diningMinutes:state.waitSettings?.diningMinutes||observed||60,cleaningMinutes:state.waitSettings?.cleaningMinutes??5,source:state.waitSettings?'Host setting':observed?'Recent completed visits':'Default assumption',sampleCount:samples.length};
+ const visits=state.parties.filter(p=>p.status==='completed'&&p.seatedAt&&p.closedAt>p.seatedAt).map(p=>({minutes:(p.closedAt-p.seatedAt)/60000,closedAt:p.closedAt}));
+ const samples=[...visits,...(state.diningSamples||[])].filter(v=>Number.isFinite(v.minutes)&&v.minutes>=15&&v.minutes<=180).sort((a,b)=>a.closedAt-b.closedAt).slice(-30).map(v=>v.minutes);
+ const observed=samples.length>=3?Math.round(samples.reduce((a,b)=>a+b,0)/samples.length):null;
+ return {diningMinutes:state.waitSettings?.diningMinutes||observed||60,cleaningMinutes:state.waitSettings?.cleaningMinutes??5,source:state.waitSettings?'Host setting':observed?'Recent completed visits (average)':'Default assumption',sampleCount:samples.length,observedMinutes:observed};
 }
-function choose(candidates,available,size,context){
+function choose(candidates,available,size,context,accessibility=false){
  let best=null;
  for(const tables of candidates){
   const seats=capacity(tables);if(seats<size)continue;
@@ -15,10 +17,28 @@ function choose(candidates,available,size,context){
    for(const b of bookings)if(overlaps(context.now+minutes*60000,context.now+(minutes+context.duration)*60000,b.startsAt,b.endsAt))minutes=(b.endsAt-context.now)/60000;
   }
   if(!Number.isFinite(minutes))continue;
-  if(!best||minutes<best.minutes||minutes===best.minutes&&(seats<best.capacity||seats===best.capacity&&tables.length<best.tables.length))best={tables,minutes,capacity:seats,ready:minutes===0};
+  const preferred=accessibility&&preferredSeating(tables,context?.preferredAreas||new Set());
+  // Prefer a suitable marked area when its extra predicted wait is at most 15 minutes.
+  const rank=minutes-(preferred?15:0),bestRank=best?best.minutes-(best.accessiblePreferred?15:0):Infinity;
+  if(!best||rank<bestRank||rank===bestRank&&(preferred&&!best.accessiblePreferred||preferred===!!best.accessiblePreferred&&(minutes<best.minutes||minutes===best.minutes&&(seats<best.capacity||seats===best.capacity&&tables.length<best.tables.length))))best={tables,minutes,capacity:seats,ready:minutes===0,...(accessibility?{accessiblePreferred:preferred}:{})};
  }return best;
 }
-export function estimateNewParty(plan,size){return Number.isInteger(size)&&size>0&&size<=100?choose(plan.candidates,plan.available,size,plan.context):null;}
+export function estimateNewParty(plan,size,preferences={}){return Number.isInteger(size)&&size>0&&size<=100?choose(plan.candidates,plan.available,size,plan.context,preferences.accessibility===true):null;}
+export function seatingOptions(plan,size,preferences={}){
+ if(!Number.isInteger(size)||size<1||size>100)return {open:[],soon:[]};
+ const all=plan.candidates.map(tables=>choose([tables],plan.available,size,plan.context,preferences.accessibility===true)).filter(Boolean);
+ const key=tables=>tables.map(t=>t.id).sort().join('|'),byTables=new Map(all.map(o=>[key(o.tables),o]));
+ const options=all.filter(o=>{
+  if(o.tables.length>4)return true; // Larger existing groups are indivisible.
+  for(let mask=1;mask<(1<<o.tables.length)-1;mask++){
+   const other=byTables.get(key(o.tables.filter((t,i)=>mask&(1<<i))));
+   if(other&&other.minutes<=o.minutes&&(!o.accessiblePreferred||other.accessiblePreferred))return false;
+  }
+  return true;
+ });
+ const order=(a,b)=>(a.minutes-(a.accessiblePreferred?15:0))-(b.minutes-(b.accessiblePreferred?15:0))||Number(!!b.accessiblePreferred)-Number(!!a.accessiblePreferred)||a.minutes-b.minutes||a.capacity-b.capacity||a.tables.length-b.tables.length;
+ return {open:options.filter(o=>o.ready).sort(order).slice(0,5),soon:options.filter(o=>!o.ready&&o.minutes<=30).sort(order).slice(0,5)};
+}
 export function waitRange(estimate){
  if(!estimate)return 'Host review needed';
  if(estimate.ready)return 'Ready to seat';
@@ -26,7 +46,7 @@ export function waitRange(estimate){
  return `${lower}–${upper} min`;
 }
 export function planWaitlist(state,now=Date.now()){
- const settings=waitSettings(state),available=new Map(),context={now,duration:settings.diningMinutes+settings.cleaningMinutes,bookings:scheduledRooms(state)};
+ const settings=waitSettings(state),available=new Map(),context={now,duration:settings.diningMinutes+settings.cleaningMinutes,bookings:scheduledRooms(state),preferredAreas:preferredAreas(state)};
  for(const t of state.tables){
   const elapsed=t.seatedAt?Math.max(0,(now-t.seatedAt)/60000):0;
   const cleaningElapsed=t.cleaningAt?Math.max(0,(now-t.cleaningAt)/60000):0;
@@ -41,7 +61,7 @@ export function planWaitlist(state,now=Date.now()){
  const order=[...waiting].sort((a,b)=>Number(b.size>largestSingle)-Number(a.size>largestSingle)||a.arrivedAt-b.arrivedAt);
  const results=new Map();
  for(const party of order){
-  const estimate=choose(candidates,available,party.size,context);
+  const estimate=choose(candidates,available,party.size,context,party.accessibility===true);
   results.set(party.id,{party,estimate,combinationPriority:party.size>largestSingle});
   if(estimate)for(const t of estimate.tables)available.set(t.id,estimate.minutes+settings.diningMinutes+settings.cleaningMinutes);
  }
