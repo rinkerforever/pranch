@@ -87,6 +87,15 @@ route='  @ipad_setup {\n    method GET HEAD\n    path /ipad-setup.html /ipad-set
 path.write_text(text.replace(marker,route+marker,1))
 PY
 fi
+python3 - <<'PY'
+from pathlib import Path
+path=Path('/etc/pizza-ranch-seating/Caddyfile')
+text=path.read_text()
+if '/setup-platform.js' not in text:
+    marker='/ipad-setup.css /api/device-setup/*'
+    if marker not in text: raise SystemExit('Tablet setup route missing; review local setup configuration')
+    path.write_text(text.replace(marker,'/ipad-setup.css /setup-platform.js /api/device-setup/*',1))
+PY
 chown -R pr-seating-web:pr-seating-web /var/lib/pizza-ranch-seating-web
 runuser -u pr-seating-web -- env HOME=/var/lib/pizza-ranch-seating-web "$ROOT/web/usr/bin/caddy" validate --config /etc/pizza-ranch-seating/Caddyfile --adapter caddyfile
 install -d -m 755 -o pr-seating-web -g pr-seating-web /var/lib/pizza-ranch-seating-web/public
