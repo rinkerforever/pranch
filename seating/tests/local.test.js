@@ -161,3 +161,35 @@ test('idle heartbeats omit unchanged seating and staff snapshots',async t=>{
  assert.equal(small.state,undefined);assert.equal(small.roster,undefined);assert.equal(small.stateHash,first.stateHash);
  assert.equal((await cloud.call({version:0,results:[]})).status,200);assert.equal(cloud.store.snapshot('waco').version,0);
 });
+
+test('combined sync uses one idle request, uploads changes, and safely retries a lost reply',async t=>{
+ const cloud=cloudFixture(t),calls=[];let lose=false;
+ const app=createLocalServer({locationId:'waco',token:'secret',cloudUrl:'https://cloud.example.test',publicUrl:'https://waco.local:8443',directory:temporary(t),noTimer:true,fetch:async(url,options={})=>{
+  const body=options.body?JSON.parse(options.body):null;calls.push(body);
+  const response=await cloud.call(body);if(lose&&body?.exchange){lose=false;throw Error('Lost reply');}return response;
+ }});closeAfter(t,()=>app.close());await app.cycle();calls.length=0;
+ await app.cycle();assert.equal(calls.length,1);assert.equal(calls[0].exchange,true);assert.equal(calls[0].state,undefined);assert.equal(app.runtime().online,true);
+ const next=applyAction(app.store.snapshot('waco').state,{type:'addParty',name:'Local change',size:3},'host');
+ app.store.db.prepare('UPDATE seating_state SET version=1,state_json=?').run(JSON.stringify(next));
+ calls.length=0;lose=true;await app.cycle();assert.equal(calls.length,1);assert.equal(cloud.store.snapshot('waco').version,1);
+ await app.cycle();assert.equal(app.runtime().requiresRecovery,false);assert.equal(app.runtime().lastError,'');assert.equal(cloud.store.snapshot('waco').state.parties.length,1);
+ calls.length=0;await app.cycle();assert.equal(calls.length,1);assert.equal(calls[0].state,undefined);
+ const changed=structuredClone(next);changed.parties[0].name='Wrong snapshot';
+ app.store.db.prepare('UPDATE seating_state SET state_json=?').run(JSON.stringify(changed));
+ await app.cycle();assert.equal(app.runtime().requiresRecovery,true);assert.equal(cloud.store.snapshot('waco').state.parties[0].name,'Local change');
+});
+
+test('combined sync confirms cloud actions immediately and retains receipts when acknowledgment is lost',async t=>{
+ const cloud=cloudFixture(t),calls=[];let loseAck=false;
+ const app=createLocalServer({locationId:'waco',token:'secret',cloudUrl:'https://cloud.example.test',publicUrl:'https://waco.local:8443',directory:temporary(t),noTimer:true,fetch:async(url,options={})=>{
+  const body=options.body?JSON.parse(options.body):null;calls.push(body);
+  if(loseAck&&body?.results?.length){loseAck=false;throw Error('Lost acknowledgment');}
+  return cloud.call(body);
+ }});closeAfter(t,()=>app.close());await app.cycle();
+ const next=applyAction(app.store.snapshot('waco').state,{type:'addParty',name:'Remote guest',size:4},'host');
+ cloud.db.prepare("INSERT INTO seating_commands(id,location_id,expected_version,state_json,created_at,expires_at) VALUES(?,?,?,?,?,?)").run('retry-command','waco',0,JSON.stringify(next),Date.now(),Date.now()+12000);
+ calls.length=0;loseAck=true;await app.cycle();assert.equal(calls.length,2);assert.equal(calls[0].exchange,true);assert.equal(calls[1].results[0].id,'retry-command');
+ assert.equal(app.store.snapshot('waco').version,1);await app.cycle();
+ assert.equal(app.store.snapshot('waco').version,1);assert.equal(cloud.store.snapshot('waco').version,1);
+ assert.equal(cloud.db.prepare('SELECT status FROM seating_commands WHERE id=?').get('retry-command').status,'completed');
+});

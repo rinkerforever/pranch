@@ -21,8 +21,9 @@ export function createLocalServer(config){
  const MEDIA={async get(key){try{const body=await readFile(mediaPath(key)),type=await readFile(mediaPath(key)+'.type','utf8');return {body,httpMetadata:{contentType:type}};}catch{return null;}},async put(key,bytes,{httpMetadata}={}){await mkdir(mediaDir,{recursive:true,mode:0o700});await writeFile(mediaPath(key),Buffer.from(bytes),{mode:0o600});await writeFile(mediaPath(key)+'.type',httpMetadata?.contentType||'image/png',{mode:0o600});},async delete(key){/* Retain original media locally for backup and in-flight requests. */}};
  async function cloud(path,options={}){
   const response=await (config.fetch||fetch)(cloudUrl+path,{...options,signal:AbortSignal.timeout(6000),headers:{authorization:`Bearer ${token}`,...options.headers}});
-  if(!response.ok){const e=await response.json().catch(()=>({}));throw Error(e.error||`Cloud returned ${response.status}`);}return response;
+  if(!response.ok){const e=await response.json().catch(()=>({}));throw Object.assign(Error(e.error||`Cloud returned ${response.status}`),{status:response.status});}return response;
  }
+ let combinedSync=false,acknowledgedVersion=-1;
  const hubPath=`/api/hub/${encodeURIComponent(locationId)}`;
  async function downloadMedia(state){if(state.background?.key&&!await MEDIA.get(state.background.key)){const response=await cloud(hubPath+'/media?key='+encodeURIComponent(state.background.key));await MEDIA.put(state.background.key,await response.arrayBuffer(),{httpMetadata:{contentType:response.headers.get('content-type')}});}}
  async function uploadMedia(state){const key=state.background?.key;if(!key||store.meta('uploadedMedia')===key)return;const image=await MEDIA.get(key);if(!image)throw Error('Floor plan image is missing locally.');await cloud(hubPath+'/media?key='+encodeURIComponent(key),{method:'PUT',headers:{'content-type':image.httpMetadata.contentType},body:image.body});store.meta('uploadedMedia',key);}
@@ -30,7 +31,11 @@ export function createLocalServer(config){
   if(cycling||closed)return;cycling=true;
   try{
    const before=active?store.snapshot(locationId):null;
-   const remote=await(await cloud(hubPath+(active?`?since=${before?.version??-1}&roster=${store.meta('rosterHash')||''}`:''))).json();
+   if(recovery)throw Error('Data recovery required. Seating changes are paused.');
+   const exchanged=active&&combinedSync;
+   if(exchanged)await uploadMedia(before.state);
+   const remote=await(await (exchanged?cloud(hubPath,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({exchange:true,localUrl:origin,version:before.version,stateHash:hash(JSON.stringify(before.state)),...(before.version!==acknowledgedVersion?{state:before.state}:{}),roster:store.meta('rosterHash')||'',results:[]})}):cloud(hubPath+(active?`?since=${before?.version??-1}&roster=${store.meta('rosterHash')||''}`:'')))).json();
+   combinedSync=remote.syncExchange===true;acknowledgedVersion=remote.version;
    if(remote.localUrl!==origin)throw Error('Local URL differs from the registered Pi address.');
    if(active){const local=store.snapshot(locationId);if(recovery||!remote.enabled||!local||local.version<remote.version||local.version===remote.version&&hash(JSON.stringify(local.state))!==remote.stateHash){recovery=true;store.meta('recovery','1');throw Error('Data recovery required. This Pi differs from the saved primary server. Seating changes are paused.');}}
    if(!active){
@@ -49,10 +54,13 @@ export function createLocalServer(config){
    const results=[];for(const command of remote.commands){await downloadMedia(JSON.parse(command.state_json));results.push({id:command.id,response:processCommand(store,locationId,command)});}
    syncRoster(store,locationId,remote.roster);
    const snapshot=store.snapshot(locationId);await uploadMedia(snapshot.state);
-   await cloud(hubPath,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({version:snapshot.version,...(!remote.deltaSync||snapshot.version>remote.version?{state:snapshot.state}:{}),results})});
+   if(!exchanged||results.length||snapshot.version>remote.version){
+    await cloud(hubPath,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({version:snapshot.version,...(!remote.deltaSync||snapshot.version>remote.version?{state:snapshot.state}:{}),results})});
+    acknowledgedVersion=snapshot.version;
+   }
    lastCloud=Date.now();lastError='';
    if(lastCloud-Number(store.meta('receiptCleanup')||0)>3600000){store.db.prepare('DELETE FROM local_receipts WHERE created_at<?').run(lastCloud-2*86400000);store.meta('receiptCleanup',lastCloud);}
-  }catch(e){lastError=e.message;}finally{cycling=false;}
+  }catch(e){lastError=e.message;if(active&&e.status===409){recovery=true;store.meta('recovery','1');}}finally{cycling=false;}
  }
  const runtime=()=>({mode:'local',online:Date.now()-lastCloud<HUB_OFFLINE_MS,lastCloud,lastError,active,requiresRecovery:recovery,localUrl:origin,cloudUrl});
  function identity(request){

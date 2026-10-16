@@ -1,3 +1,4 @@
+import {keyedChildren,floorImageUrl} from './render-cache.js';
 import {areaOptions,areaName,roomOptions,partyRoomAreas} from './areas.js';
 import {planImage,cleanUpPlan} from './plan-cleanup.js';
 import {drawingBounds,fullPlanBox,tableFocusBox} from './plan-fit.js';
@@ -185,7 +186,7 @@ function preparePlanFit(){
  const key=locationId+'|'+(state.background.key||state.background.dataUrl);
  if(backgroundFit?.key===key)return;
  const fit=backgroundFit={key,bounds:null};
- const image=new Image();image.src=demo?state.background.dataUrl:endpoint('floorplan')+`?v=${version}`;
+ const image=new Image();image.src=floorImageUrl(endpoint('floorplan'),state.background,demo);
  image.decode().then(()=>{
   const canvas=document.createElement('canvas');canvas.width=1660;canvas.height=950;
   const ctx=canvas.getContext('2d',{willReadFrequently:true}),scale=Math.min(1660/image.naturalWidth,950/image.naturalHeight),w=image.naturalWidth*scale,h=image.naturalHeight*scale;
@@ -193,15 +194,23 @@ function preparePlanFit(){
   if(backgroundFit===fit&&view==='All'&&viewFitted){viewBox=fullPlanBox(fit.bounds,state.tables);renderFloor();}
  }).catch(()=>{/* Keep the complete canvas if the image cannot be inspected. */});
 }
+let floorSceneKey=null;
 function renderFloor(){
   preparePlanFit();
   if(view==='All'&&state.background&&viewFitted)viewBox=fullPlanBox(backgroundFit?.bounds,state.tables);
-  const viewport=$('floor');viewport.replaceChildren();viewport.setAttribute('viewBox',viewBox.join(' '));
-  const clip=svg('clipPath',{id:'floor-view-clip',clipPathUnits:'userSpaceOnUse'});
-  clip.append(svg('rect',{id:'floor-view-bounds',x:viewBox[0],y:viewBox[1],width:viewBox[2],height:viewBox[3]}));
-  const defs=svg('defs');defs.append(clip);
-  const floor=svg('g',{'clip-path':'url(#floor-view-clip)'});viewport.append(defs,floor);
-  if(state.background)floor.append(planImage(demo?state.background.dataUrl:endpoint('floorplan')+`?v=${version}`,state.background.covers));
+  const viewport=$('floor');viewport.setAttribute('viewBox',viewBox.join(' '));
+  if(!viewport.querySelector('#floor-static')){
+   const clip=svg('clipPath',{id:'floor-view-clip'});clip.append(svg('rect',{id:'floor-view-bounds'}));
+   const defs=svg('defs');defs.append(clip);
+   const scene=svg('g',{'clip-path':'url(#floor-view-clip)'});
+   scene.append(svg('g',{id:'floor-static'}),svg('g',{id:'floor-groups'}),svg('g',{id:'floor-tables'}));
+   viewport.replaceChildren(defs,scene);floorSceneKey=null;
+  }
+  const bounds=$('floor-view-bounds');for(const [i,name] of ['x','y','width','height'].entries())bounds.setAttribute(name,viewBox[i]);
+  const sceneKey=JSON.stringify([locationId,state.background||null,...(state.background?[]:[areaOptions(state),roomOptions(state).map(r=>{const info=roomInfo(state,r.id);return [r.id,info.capacity,info.blocks.length];}),activeRoomBlocks(state).some(b=>b.roomId==='combined')])]);
+  if(sceneKey!==floorSceneKey){
+   const floor=$('floor-static');floor.replaceChildren();floorSceneKey=sceneKey;
+  if(state.background)floor.append(planImage(floorImageUrl(endpoint('floorplan'),state.background,demo),state.background.covers));
   else{
     floor.append(svg('rect',{x:10,y:0,width:1600,height:870,fill:'#f8f9f4'}),svg('path',{d:activeRoomBlocks(state).some(b=>b.roomId==='combined')?WALL_PATH.replace('M1205 0V130',''):WALL_PATH,class:'wall'}));
     if(activeRoomBlocks(state).some(b=>b.roomId==='combined')){const divider=svg('path',{d:'M1205 0V130',fill:'none',stroke:'#9562aa','stroke-width':2,'stroke-dasharray':'4 6','aria-label':'Rose City and Azalea Trail divider open for combined booking'});divider.append(svg('title',{},'Divider open · combined room booking'));floor.append(divider);}
@@ -216,8 +225,10 @@ function renderFloor(){
     }
     floor.append(svg('rect',{x:1475,y:485,width:94,height:42,rx:3,fill:'none',stroke:'#b1b8ad','stroke-width':2}));
   }
-  const groups=[...new Set(state.tables.map(t=>t.group).filter(Boolean))];for(const id of groups){const ts=state.tables.filter(t=>t.group===id);for(let i=1;i<ts.length;i++)floor.append(svg('line',{x1:ts[i-1].x,y1:ts[i-1].y,x2:ts[i].x,y2:ts[i].y,class:'group-line'}));}
-  for(const t of state.tables)floor.append(tableSymbol(t));
+  }
+  const groups=[...new Set(state.tables.map(t=>t.group).filter(Boolean))].map(id=>({id,tables:state.tables.filter(t=>t.group===id)}));
+  keyedChildren($('floor-groups'),groups,g=>g.id,g=>JSON.stringify(g.tables.map(t=>[t.id,t.x,t.y])),g=>{const node=svg('g');for(let i=1;i<g.tables.length;i++){const a=g.tables[i-1],b=g.tables[i];node.append(svg('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:'group-line'}));}return node;});
+  keyedChildren($('floor-tables'),state.tables,t=>t.id,t=>JSON.stringify([locationId,t,selected.has(t.id),editing,combining,canWrite()]),tableSymbol);
   for(const s of Object.keys(names))$('count-'+s).textContent=state.tables.filter(t=>t.status===s).length;
   const seats=openSeats(state.tables);$('count-seats').textContent=seats.count;$('phone-seat-count').textContent=seats.count;$('phone-seat-note').textContent=seats.unconfirmed?'Confirmed capacity only':'Restaurant total';
   $('seat-count-note').textContent=seats.unconfirmed?`${seats.unconfirmed} open booths/tables need a capacity; excluded from seat count.`:'';
@@ -265,7 +276,7 @@ function renderWaitlistView(){
  $('waitlist-add').disabled=!canWrite();
  $('wait-estimate-basis').textContent=`${plan.settings.source}: ${plan.settings.diningMinutes} min dining + ${plan.settings.cleaningMinutes} min cleaning. Uses time already seated and current queue. Overdue occupied tables keep a 10-minute buffer. Update table statuses promptly.`;
  $('waitlist-empty').hidden=rows.length>0;
- $('waitlist-rows').replaceChildren(...rows.map(({party:p,estimate,combinationPriority},i)=>{
+ keyedChildren($('waitlist-rows'),rows.map((r,i)=>({...r,index:i})),r=>r.party.id,r=>JSON.stringify([locationId,r,Math.floor(now/60000),canWrite()]),({party:p,estimate,combinationPriority,index:i})=>{
   const forecast=guestForecast(p,estimate,now),row=el('tr',{class:`${estimate?.ready?'ready-row ':''}${forecast.pastEstimate?'past-estimate-row':''}`}),guest=el('td'),wait=el('td'),eta=el('td'),table=el('td'),action=el('td');
   wait.append(el('strong',{},`${forecast.waitedMinutes} min`),el('small',{},`Arrived ${forecastTime(p.arrivedAt)}`));
   guest.append(el('strong',{},`${i+1}. ${p.name}`),el('small',{},`${p.size} guests${p.highChair?' · High chair':''}${p.booster?' · Booster':''}`));
@@ -284,29 +295,17 @@ function renderWaitlistView(){
   const button=el('button',{class:estimate?.ready?'primary small':'small'},estimate?.ready?'Review & seat':'View options');button.onclick=()=>chooseWaitingParty(p,estimate?.ready?estimate.tables:[]);action.append(button);
   if(canWrite()){const edit=el('button',{class:'quiet small'},'Review / edit guest');edit.onclick=()=>openGuest(p);action.append(edit);const remove=el('button',{class:'quiet small danger'},'Remove');remove.onclick=async()=>{if(await confirmChange('Remove waiting party?',`Remove ${p.name} from the waiting list?`))await act({type:'cancelParty',id:p.id});};action.append(remove);}
   row.append(guest,wait,eta,table,action);return row;
- }));renderQuote();
+ });renderQuote();
 }
 function renderWait(){
   const plan=currentPlan();renderWaitlistView();if($('guest-dialog').open)renderGuestQuote();
   const waiting=state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt);$('rail-wait-count').textContent=waiting.length;$('wait-count').textContent=waiting.length;$('tablet-wait-count').textContent=waiting.length;$('phone-wait-count').textContent=waiting.length;$('add-guest').disabled=!canWrite();
-  if(!waiting.length){$('wait-list').replaceChildren(el('div',{class:'empty'},'Everyone is seated. Add a party when guests arrive.'));return;}
-  $('wait-list').replaceChildren(...waiting.map((p,index)=>{
-    const planned=plan.rows.find(r=>r.party.id===p.id),ready=!!planned?.estimate?.ready;
-    const row=el('div',{class:`guest${p.id===partyId?' active':''}${ready?' ready-row':''}`,tabindex:0,role:'button','aria-label':`${p.name}, ${p.size} guests, waiting ${minutes(p.arrivedAt)} minutes`});
-    const main=el('div',{class:'guest-main'});main.append(el('strong',{},p.name),el('small',{},`#${index+1}`));
-    const meta=el('div',{class:'guest-meta'});meta.append(el('span',{},`${p.size} guests`),el('span',{},`${minutes(p.arrivedAt)} min wait`));row.append(main,meta);
-    row.append(el('p',{class:'wait-estimate'},waitRange(planned?.estimate)));const forecast=guestForecast(p,planned?.estimate);if(forecast.pastEstimate)row.append(el('small',{class:'overdue-estimate'},`${forecast.pastMinutes} min past original estimate`));if(planned?.combinationPriority)row.append(el('span',{class:'combination-tag'},'Combination priority'));
-    if(p.source==='qr')row.append(el('small',{class:'qr-source'},p.readyAt?'QR guest · Ready — return to host':'QR guest check-in'));
-    if(p.highChair||p.booster||p.accessibility)row.append(el('p',{class:'equipment-badges'},[p.highChair?'High chair':null,p.booster?'Booster seat':null,p.accessibility?'Accessible seating preferred':null].filter(Boolean).join(' · ')));
-    if(p.notes)row.append(el('p',{class:'guest-note'},p.notes));
-    const choose=()=>{combining=false;partyId=p.id;selected.clear();renderWait();renderSelection();renderRecommendations();renderFloor();$('recommend-panel').scrollIntoView({block:'nearest',behavior:'smooth'});};const fit=ready?planned.estimate.tables:null;const fitButton=el('button',{class:'guest-fit',type:'button'},fit?`Suggested: ${fit.map(label).join(' + ')} · View options`:'Find tables');fitButton.onclick=e=>{e.stopPropagation();choose();};row.append(fitButton);row.onclick=choose;row.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();choose();}};
-    if(partyId===p.id&&canWrite()){
-      const actions=el('div',{class:'guest-actions'}),edit=el('button',{class:'quiet small'},'Edit'),cancel=el('button',{class:'quiet small danger'},'Remove');
-      edit.onclick=e=>{e.stopPropagation();openGuest(p);};cancel.onclick=async e=>{e.stopPropagation();if(await confirmChange('Remove waiting party?',`Remove ${p.name} from the waiting list?`))await act({type:'cancelParty',id:p.id});};actions.append(edit,cancel);if(p.source==='qr'){const ready=el('button',{class:'small'},p.readyAt?'Ready sent':'Mark ready');ready.disabled=!!p.readyAt;ready.onclick=async e=>{e.stopPropagation();if(await act({type:'readyParty',id:p.id}))toast('Guest status page updated: table ready.');};actions.append(ready);}row.append(actions);
-    }return row;
-  }));
 }
+
+let selectionRenderKey=null;
 function renderSelection(){
+  const key=JSON.stringify([locationId,role,transportReady,partyId,current(),state.parties.filter(p=>p.status==='waiting'),combining,editing]);
+  if(key===selectionRenderKey)return;selectionRenderKey=key;
   const box=$('selection-body'),tables=current(),party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');const overrideKey=JSON.stringify([party?.id,party?.size,tables.map(t=>[t.id,t.capacity,t.status])]),keepOverride=box.dataset.overrideKey===overrideKey&&!!box.querySelector('#child-override')?.checked;box.dataset.overrideKey=overrideKey;box.replaceChildren();$('selection-title').textContent=party?`Seat ${party.name}`:'Table details';
   if(!canWrite())box.append(el('p',{class:'read-only-note'},'View-only access. Ask an administrator for host access to make changes.'));
   if(party)box.append(el('p',{class:'muted'},`${party.size} guests · Choose a table below or tap tables on the floor.`));
@@ -557,6 +556,6 @@ $('areas-open').onclick=async()=>{
 $('clean-plan').onclick=async()=>{
  if(!state?.background||!canEdit()||busy||uploadBusy)return;
  uploadBusy=true;$('location').disabled=true;
- try{await cleanUpPlan({state,href:demo?state.background.dataUrl:endpoint('floorplan')+`?v=${version}`,locationName:locations.find(l=>l.id===locationId)?.name||'',save:async covers=>{if(!await act({type:'cleanPlan',covers}))throw new Error('Cleanup was not saved. Close this window and reopen it to review the latest plan.');toast('Cleaned plan saved for this location.');}});}
+ try{await cleanUpPlan({state,href:floorImageUrl(endpoint('floorplan'),state.background,demo),locationName:locations.find(l=>l.id===locationId)?.name||'',save:async covers=>{if(!await act({type:'cleanPlan',covers}))throw new Error('Cleanup was not saved. Close this window and reopen it to review the latest plan.');toast('Cleaned plan saved for this location.');}});}
  finally{uploadBusy=false;$('location').disabled=false;}
 };

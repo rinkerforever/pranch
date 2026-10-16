@@ -44,6 +44,7 @@ async function authorizedHub(request,env,id){
 export async function hubApi(request,env,url){
  const match=url.pathname.match(/^\/api\/hub\/([^/]+)(\/media)?$/);if(!match)throw new AppError('Not found.',404);
  const id=decodeURIComponent(match[1]),hub=await authorizedHub(request,env,id);
+ let exchange=null;
  const location=await env.DB.prepare('SELECT id,name FROM locations WHERE id=? AND active=1').bind(id).first();if(!location)throw new AppError('Restaurant is disabled.',403);
  if(match[2]){
   const key=url.searchParams.get('key');if(!key?.startsWith(`seating/${id}/`)||key.length>200)throw new AppError('Invalid floor plan key.');
@@ -68,6 +69,7 @@ export async function hubApi(request,env,url){
   }
   if(!hub.enabled)throw new AppError('Activate this local server first.',409);
   if(!Number.isSafeInteger(body.version)||body.version<row.version||body.version>row.version&&!body.state||body.state&&(!Array.isArray(body.state.tables)||!Array.isArray(body.state.parties))||!Array.isArray(body.results)||body.results.length>20)throw new AppError('Local data is older than the cloud or malformed. Administrator recovery is required.',409);
+  if(body.exchange&&(body.localUrl!==hub.local_url||typeof body.stateHash!=='string'||body.stateHash!==await digest(body.state?JSON.stringify(body.state):row.state_json)))throw new AppError('State or local URL differs. Administrator recovery is required.',409);
   const snapshot=body.state?JSON.stringify(body.state):row.state_json;
   if(body.version===row.version&&body.state&&snapshot!==JSON.stringify(JSON.parse(row.state_json)))throw new AppError('State differs at the same version. Administrator recovery is required.',409);
   if(body.version>row.version)await env.DB.prepare("UPDATE seating_state SET state_json=?,version=?,updated_by='local-server',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE location_id=? AND version<?").bind(snapshot,body.version,id,body.version).run();
@@ -77,13 +79,14 @@ export async function hubApi(request,env,url){
   }
   await env.DB.prepare('UPDATE seating_hubs SET last_seen=?,synced_version=? WHERE location_id=?').bind(Date.now(),body.version,id).run();
   await env.DB.prepare('DELETE FROM seating_commands WHERE location_id=? AND created_at<?').bind(id,Date.now()-86400000).run();
-  return json({ok:true});
+  if(!body.exchange)return json({ok:true});
+  exchange=body;
  }
- if(request.method!=='GET')throw new AppError('Method not allowed.',405);
+ if(request.method!=='GET'&&!exchange)throw new AppError('Method not allowed.',405);
  const row=await env.DB.prepare('SELECT version,state_json FROM seating_state WHERE location_id=?').bind(id).first();
  if(!row)throw new AppError('Open this store’s seating chart online before pairing.',409);
  const roster=await env.DB.prepare("SELECT u.id,u.auth_user_id,u.email,u.display_name,u.system_admin,CASE WHEN u.system_admin=1 THEN 'admin' ELSE g.role END AS role FROM user_profiles u LEFT JOIN seating_grants g ON g.user_id=u.id AND g.location_id=? WHERE u.active=1 AND (u.system_admin=1 OR (g.role IS NOT NULL AND EXISTS(SELECT 1 FROM user_location_roles r WHERE r.user_id=u.id AND r.location_id=g.location_id)))").bind(id).all();
  const commands=await env.DB.prepare("SELECT id,expected_version,state_json,expires_at FROM seating_commands WHERE location_id=? AND status='pending' ORDER BY created_at LIMIT 20").bind(id).all();
  const rosterHash=await digest(JSON.stringify(roster.results));
- return json({deltaSync:true,enabled:!!hub.enabled,location,version:row.version,...(!hub.enabled||url.searchParams.get('since')!==String(row.version)?{state:JSON.parse(row.state_json)}:{}),stateHash:await digest(row.state_json),...(url.searchParams.get('roster')!==rosterHash?{roster:roster.results}:{}),commands:commands.results,localUrl:hub.local_url});
+ return json({deltaSync:true,syncExchange:true,enabled:!!hub.enabled,location,version:row.version,...(!hub.enabled||String(exchange?.version??url.searchParams.get('since'))!==String(row.version)?{state:JSON.parse(row.state_json)}:{}),stateHash:await digest(row.state_json),...((exchange?.roster??url.searchParams.get('roster'))!==rosterHash?{roster:roster.results}:{}),commands:commands.results,localUrl:hub.local_url});
 }
