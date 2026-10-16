@@ -1,6 +1,6 @@
 import {areaOptions,areaName,roomOptions} from './areas.js';
 import {planImage,cleanUpPlan} from './plan-cleanup.js';
-import {drawingBounds,fullPlanBox} from './plan-fit.js';
+import {drawingBounds,fullPlanBox,tableFocusBox} from './plan-fit.js';
 import {readyTracker} from './ready-alert.js';
 import {connectionIndicator} from './connection-indicator.js';
 import {installApp,runtimeInfo,pairLocalServer,layoutSettings} from './device.js';
@@ -23,6 +23,7 @@ let recoveringAccess=false;
 let lastConnectionConfirmed=0,seatingReachable=true;
 let activeScreen=location.hash==='#waitlist'?'waitlist':'floor';
 function renderScreen(){
+ $('seat-now-open').hidden=activeScreen!=='floor'||editing||!canWrite();
  $('app').dataset.screen=activeScreen;
  history.replaceState(null,'',activeScreen==='waitlist'?'#waitlist':'#floor');
  const allowed=!!state&&locations.some(l=>l.id===locationId);
@@ -229,7 +230,7 @@ function renderFloor(){
 }
 let planCache=null,planState=null,planMinute=-1;
 function currentPlan(){const minute=Math.floor(Date.now()/60000);if(planState!==state||planMinute!==minute){planCache=planWaitlist(state);planState=state;planMinute=minute;}return planCache;}
-function chooseWaitingParty(p,tables=[]){combining=false;partyId=p.id;selected=new Set(tables.map(t=>t.id));editing=false;activeScreen='floor';renderScreen();if(tables.length)setView(tables[0].area);render();showSidebar('details');}
+function chooseWaitingParty(p,tables=[]){combining=false;partyId=p.id;selected=new Set(tables.map(t=>t.id));editing=false;activeScreen='floor';renderScreen();render();showSidebar('details');if(tables.length)focusTables(tables);}
 function renderQuote(){if(!state)return;const estimate=estimateNewParty(currentPlan(),Number($('estimate-size').value),{accessibility:$('estimate-accessibility').checked});$('estimate-result').textContent=waitRange(estimate);}
 function renderGuestQuote(){
  if(!state)return;const size=Number($('guest-size').value),preferences={accessibility:$('guest-accessibility').checked},plan=currentPlan();
@@ -348,7 +349,7 @@ function renderRecommendations(){
   const planned=currentPlan().rows.find(r=>r.party.id===party.id)?.estimate;
   if(planned?.ready){const key=ts=>ts.map(t=>t.id).sort().join('|'),index=candidates.findIndex(ts=>key(ts)===key(planned.tables));if(index>=0)candidates.splice(index,1);candidates.unshift(planned.tables);}
   candidates.push(...state.tables.filter(t=>t.status==='open'&&!t.group&&childBoothFit([t],party.size)).slice(0,2).map(t=>[t]));
-  $('recommendations').replaceChildren(...candidates.map(ts=>{const b=el('button',{class:'suggestion'}),info=el('span');info.append(el('strong',{},ts.map(label).join(' + ')),el('small',{},`${ts.reduce((n,t)=>n+t.capacity,0)} seats · ${childBoothFit(ts,party.size)?'Small-child override required':includesBoothCombination(ts)?'Booth + table · confirm fit':ts.length>1?'Nearby combination':'Open table'}`));b.append(info,el('span',{},'→'));b.onclick=()=>{combining=false;selected=new Set(ts.map(t=>t.id));setView(ts[0].area);renderFloor();renderSelection();showSidebar('details');};return b;}));
+  $('recommendations').replaceChildren(...candidates.map(ts=>{const b=el('button',{class:'suggestion'}),info=el('span');info.append(el('strong',{},ts.map(label).join(' + ')),el('small',{},`${ts.reduce((n,t)=>n+t.capacity,0)} seats · ${childBoothFit(ts,party.size)?'Small-child override required':includesBoothCombination(ts)?'Booth + table · confirm fit':ts.length>1?'Nearby combination':'Open table'}`));b.append(info,el('span',{},'→'));b.onclick=()=>{combining=false;selected=new Set(ts.map(t=>t.id));renderSelection();showSidebar('details');focusTables(ts);};return b;}));
   if(planned&&!planned.ready)$('recommendations').append(el('p',{class:'estimate-note'},`Expected next: ${planned.tables.map(label).join(' + ')} · ${waitRange(planned)}${planned.accessiblePreferred?' · Accessibility preferred':''}. Host must confirm the table is clear.`));
   if(!candidates.length)$('recommendations').append(el('p',{class:'empty'},'No available fit. A manager can confirm booth capacities or approve table combinations in Layout editor.'));
 }
@@ -360,6 +361,7 @@ function importedViewBox(value){
  const xs=tables.map(t=>t.x),ys=tables.map(t=>t.y),x=Math.max(0,Math.min(...xs)-65),y=Math.max(0,Math.min(...ys)-65);
  return [x,y,Math.min(1660-x,Math.max(150,Math.max(...xs)-x+65)),Math.min(950-y,Math.max(150,Math.max(...ys)-y+65))];
 }
+function focusTables(tables){view=tables.every(t=>t.area===tables[0].area)?tables[0].area:'All';viewFitted=false;viewBox=tableFocusBox(tables);renderAreas();renderFloor();}
 function setView(value){closeSidebar();view=value;viewFitted=true;const boxes={All:[0,-20,1660,950],Dining:[140,550,1495,360],A:[1300,540,340,350],B:[680,610,665,285],C:[155,610,540,285],'Party rooms':[1000,-10,640,220],'Rose City':[1010,-10,190,200],'Azalea Trail':[1190,-10,210,200],'Piney Woods':[1390,-10,250,230]};viewBox=(state?.background?.imported||state?.areaConfig)?importedViewBox(value):(boxes[value]||boxes.All);renderAreas();if(state)renderFloor();}
 function renderAreas(){
  const areas=areaOptions(state),labels={All:'Full plan',Dining:'Dining room'};
@@ -376,7 +378,7 @@ function renderAllowed(allowed=[]){const area=$('table-area').value,kind=$('tabl
 }
 function render(){
   $('clean-plan').hidden=!state.background;
-  $('seat-now-open').hidden=editing||!canWrite();
+  $('seat-now-open').hidden=activeScreen!=='floor'||editing||!canWrite();
   $('guest-checkin').hidden=!canWrite();$('areas-open').hidden=!canEdit();
   $('phone-location').textContent=locations.find(l=>l.id===locationId)?.name||'';
   $('edit-tab').hidden=!canEdit();if(!canEdit())editing=false;$('tablet-wait').hidden=editing;

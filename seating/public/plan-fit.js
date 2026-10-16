@@ -19,3 +19,11 @@ export function fullPlanBox(bounds,tables=[]){
  const padding=16;
  return [left-padding,top-padding,Math.max(120,right-left+2*padding),Math.max(120,bottom-top+2*padding)];
 }
+
+// Center on the actual recommended tables, including chairs and room for context.
+export function tableFocusBox(tables=[]){
+ if(!tables.length)return [0,0,1660,950];
+ const [x,y,w,h]=fullPlanBox({x:tables[0].x,y:tables[0].y,width:0,height:0},tables);
+ const width=Math.max(300,w+100),height=Math.max(220,h+100);
+ return [x+w/2-width/2,y+h/2-height/2,width,height];
+}
