@@ -33,6 +33,20 @@ function seededLocal(t){
  app.store.meta('active','1');return app;
 }
 const localRequest=(app,path,body,cookie='',client)=>app.handle(new Request('https://waco.local:8443'+path,{method:body?'POST':'GET',headers:{origin:'https://waco.local:8443',cookie},...(body?{body:JSON.stringify(body)}:{})}),client);
+
+test('explicit local alias supports PIN and actions while rejecting foreign origins',async t=>{
+ const seed=seededLocal(t);
+ // Persist a paired fixture, then reopen with the additional browser origin.
+ const path=seed.store.db.prepare('PRAGMA database_list').get().file;
+ await seed.close();cleanup.get(t).close.pop();
+ const app=createLocalServer({locationId:'waco',token:'secret',cloudUrl:'https://cloud.example.test',publicUrl:'https://waco.local:8443',allowedOrigins:['https://waco-seating.local:8443'],directory:join(path,'..'),noTimer:true});closeAfter(t,()=>app.close());
+ const send=(origin,path,body,cookie='')=>app.handle(new Request('https://waco.local:8443'+path,{method:'POST',headers:{...(origin?{origin}:{}),cookie},body:JSON.stringify(body)}));
+ for(const origin of [null,'https://evil.example','https://waco-seating.local:8444','http://waco-seating.local:8443'])assert.equal((await send(origin,'/api/login',{pin:'1234'})).status,403);
+ const login=await send('https://waco-seating.local:8443','/api/login',{pin:'1234'});assert.equal(login.status,200);
+ const cookie=login.headers.get('set-cookie').split(';')[0];
+ assert.equal((await send('https://waco-seating.local:8443','/api/locations/waco/actions',{version:0,action:{type:'addParty',name:'Alias guest',size:2}},cookie)).status,200);
+ assert.equal((await localRequest(app,'/api/login',{pin:'1234'})).status,200);
+});
 test('iPad onboarding exposes only public connection information and manager QR uses the selected restaurant',async t=>{
  const cloud=cloudFixture(t),fetch=path=>worker.fetch(new Request('https://cloud.example.test'+path),cloud.env,{waitUntil(){}});
  cloud.db.prepare('UPDATE seating_hubs SET enabled=1').run();
@@ -193,3 +207,4 @@ test('combined sync confirms cloud actions immediately and retains receipts when
  assert.equal(app.store.snapshot('waco').version,1);assert.equal(cloud.store.snapshot('waco').version,1);
  assert.equal(cloud.db.prepare('SELECT status FROM seating_commands WHERE id=?').get('retry-command').status,'completed');
 });
+

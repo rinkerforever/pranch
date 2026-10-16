@@ -13,7 +13,11 @@ const json=(value,status=200)=>new Response(JSON.stringify(value),{status,header
 export function createLocalServer(config){
  const {locationId,token,cloudUrl,publicUrl,directory}=config;
  if(!locationId||!token||!/^https:\/\//.test(cloudUrl)||!/^https:\/\//.test(publicUrl)&&!config.testMode)throw Error('Set the location ID, pairing token, HTTPS cloud URL and HTTPS local URL.');
- const origin=new URL(publicUrl).origin,store=openStore(directory),mediaDir=join(directory,'media');
+ const origin=new URL(publicUrl).origin;
+ const allowedOrigins=new Set([origin,...(config.allowedOrigins||[]).map(value=>{
+  const url=new URL(value);if(url.protocol!=='https:'||url.username||url.password||url.pathname!=='/'||url.search||url.hash)throw Error('Local aliases must be HTTPS origins.');return url.origin;
+ })]);
+ const store=openStore(directory),mediaDir=join(directory,'media');
  let lastCloud=0,lastError='Waiting for initial synchronization',cycling=false,closed=false,active=store.meta('active')==='1',recovery=store.meta('recovery')==='1';
  const cookie=(value,age)=>`seat_local=${value}; HttpOnly; ${config.testMode?'':'Secure; '}SameSite=Strict; Path=/; Max-Age=${age}`;
  const clientAllowed=ip=>ip==='127.0.0.1'||ip==='::1'||ip==='::ffff:127.0.0.1';
@@ -78,7 +82,7 @@ export function createLocalServer(config){
  async function handle(request,client='127.0.0.1'){
   if(!clientAllowed(client))return json({error:'Use the local HTTPS proxy.'},403);
   const url=new URL(request.url);if(url.origin!==origin)return json({error:'Unknown local hostname.'},403);
-  if(!['GET','HEAD'].includes(request.method)&&request.headers.get('origin')!==origin)return json({error:'Request origin is not allowed.'},403);
+  if(!['GET','HEAD'].includes(request.method)&&!allowedOrigins.has(request.headers.get('origin')))return json({error:'Request origin is not allowed.'},403);
   try{
    if(url.pathname.startsWith('/api/hub/'))throw new AppError('Local pairing endpoint is not public.',404);
    if(url.pathname==='/api/local/enroll'&&request.method==='POST'){
@@ -113,6 +117,9 @@ export function createLocalServer(config){
    if(url.pathname==='/api/guest/'+encodeURIComponent(locationId))return json({location:store.db.prepare('SELECT name FROM locations WHERE id=?').get(locationId)?.name,enabled:false,offline:true,message:'Please see the host to join the waitlist.',maxPartySize:12,party:null},request.method==='POST'?503:200);
    if(url.pathname==='/api/runtime')return json(runtime());
    if(recovery&&!['GET','HEAD'].includes(request.method))throw new AppError('Data recovery required. Seating changes are paused; contact the administrator.',503);
+   // The loopback adapter uses the registered URL. Normalize only after validating
+   // the browser's origin against the explicit local allowlist above.
+   if(!['GET','HEAD'].includes(request.method)){const headers=new Headers(request.headers);headers.set('origin',origin);request=new Request(request,{headers});}
    return await worker.fetch(request,env,{waitUntil:p=>p.catch(()=>{})});
   }catch(e){return json({error:e instanceof AppError?e.message:'Unable to complete this request. Check the connection and try again.'},e.status||503);}
  }
@@ -133,7 +140,7 @@ export function createLocalServer(config){
  return {server,store,handle,cycle,runtime,async close(){closed=true;if(timer)clearInterval(timer);await new Promise(resolve=>server.listening?server.close(resolve):resolve());store.close();}};
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- const app=createLocalServer({locationId:process.env.SEATING_LOCATION_ID,token:process.env.SEATING_HUB_TOKEN,cloudUrl:process.env.SEATING_CLOUD_URL||'https://seating.projectaimnet.com',publicUrl:process.env.SEATING_LOCAL_URL,directory:process.env.SEATING_DATA_DIR||'/var/lib/pizza-ranch-seating'});
+ const app=createLocalServer({locationId:process.env.SEATING_LOCATION_ID,token:process.env.SEATING_HUB_TOKEN,cloudUrl:process.env.SEATING_CLOUD_URL||'https://seating.projectaimnet.com',publicUrl:process.env.SEATING_LOCAL_URL,allowedOrigins:(process.env.SEATING_ALLOWED_ORIGINS||'').split(',').map(value=>value.trim()).filter(Boolean),directory:process.env.SEATING_DATA_DIR||'/var/lib/pizza-ranch-seating'});
  app.server.listen(Number(process.env.PORT)||8790,'127.0.0.1',()=>{console.log('Local seating service listening on loopback port '+(process.env.PORT||8790));app.cycle();});
  for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>app.close().then(()=>process.exit()));
 }
