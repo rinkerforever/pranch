@@ -17,3 +17,5 @@ export function roomOptions(state){
  const combined=roomCombinations(state).filter(c=>c.areas.every(id=>areas.some(a=>a.id===id&&a.kind==='room'))).map(c=>({...c,name:c.areas.map(id=>areaName(state,id)).join(' + ')}));
  return [...single,...combined];
 }
+
+export const partyRoomAreas=state=>new Set(areaOptions(state).filter(a=>a.kind==='room').map(a=>a.id));

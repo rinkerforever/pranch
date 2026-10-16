@@ -1,5 +1,6 @@
 import {scheduledRooms,overlaps} from './rooms.js';
-import {combinationCandidates} from './suggestions.js';
+import {partyRoomAreas} from './areas.js';
+import {combinationCandidates,usesPartyRoom} from './suggestions.js';
 import {preferredAreas,preferredSeating} from './accessibility.js';
 const capacity=ts=>ts.reduce((n,t)=>n+t.capacity,0);
 export function waitSettings(state){
@@ -9,7 +10,7 @@ export function waitSettings(state){
  return {diningMinutes:state.waitSettings?.diningMinutes||observed||60,cleaningMinutes:state.waitSettings?.cleaningMinutes??5,source:state.waitSettings?'Host setting':observed?'Recent completed visits (average)':'Default assumption',sampleCount:samples.length,observedMinutes:observed};
 }
 function choose(candidates,available,size,context,accessibility=false){
- let best=null;
+ let best=null;const options=[];
  for(const tables of candidates){
   const seats=capacity(tables);if(seats<size)continue;
   let minutes=Math.max(...tables.map(t=>available.get(t.id)??Infinity));
@@ -17,10 +18,18 @@ function choose(candidates,available,size,context,accessibility=false){
    for(const b of bookings)if(overlaps(context.now+minutes*60000,context.now+(minutes+context.duration)*60000,b.startsAt,b.endsAt))minutes=(b.endsAt-context.now)/60000;
   }
   if(!Number.isFinite(minutes))continue;
+  options.push({tables,minutes,seats});
+ }
+ // Use party rooms as overflow only after suitable open dining tables are allocated.
+ const rooms=context?.partyRoomAreas||partyRoomAreas();
+ const diningReady=options.some(o=>o.minutes===0&&!usesPartyRoom(o.tables,rooms));
+ const roomReady=!diningReady&&options.some(o=>o.minutes===0&&usesPartyRoom(o.tables,rooms));
+ for(const {tables,minutes,seats} of options){
+  if(diningReady&&usesPartyRoom(tables,rooms)||roomReady&&minutes!==0)continue;
   const preferred=accessibility&&preferredSeating(tables,context?.preferredAreas||new Set());
   // Prefer a suitable marked area when its extra predicted wait is at most 15 minutes.
   const rank=minutes-(preferred?15:0),bestRank=best?best.minutes-(best.accessiblePreferred?15:0):Infinity;
-  if(!best||rank<bestRank||rank===bestRank&&(preferred&&!best.accessiblePreferred||preferred===!!best.accessiblePreferred&&(minutes<best.minutes||minutes===best.minutes&&(seats<best.capacity||seats===best.capacity&&tables.length<best.tables.length))))best={tables,minutes,capacity:seats,ready:minutes===0,...(accessibility?{accessiblePreferred:preferred}:{})};
+  if(!best||rank<bestRank||rank===bestRank&&(preferred&&!best.accessiblePreferred||preferred===!!best.accessiblePreferred&&(minutes<best.minutes||minutes===best.minutes&&(Number(usesPartyRoom(tables,rooms))<Number(usesPartyRoom(best.tables,rooms))||usesPartyRoom(tables,rooms)===usesPartyRoom(best.tables,rooms)&&(seats<best.capacity||seats===best.capacity&&tables.length<best.tables.length)))))best={tables,minutes,capacity:seats,ready:minutes===0,...(accessibility?{accessiblePreferred:preferred}:{})};
  }return best;
 }
 export function estimateNewParty(plan,size,preferences={}){return Number.isInteger(size)&&size>0&&size<=100?choose(plan.candidates,plan.available,size,plan.context,preferences.accessibility===true):null;}
@@ -36,8 +45,10 @@ export function seatingOptions(plan,size,preferences={}){
   }
   return true;
  });
- const order=(a,b)=>(a.minutes-(a.accessiblePreferred?15:0))-(b.minutes-(b.accessiblePreferred?15:0))||Number(!!b.accessiblePreferred)-Number(!!a.accessiblePreferred)||a.minutes-b.minutes||a.capacity-b.capacity||a.tables.length-b.tables.length;
- return {open:options.filter(o=>o.ready).sort(order).slice(0,5),soon:options.filter(o=>!o.ready&&o.minutes<=30).sort(order).slice(0,5)};
+ const rooms=plan.context.partyRoomAreas;
+ const open=options.filter(o=>o.ready),diningOpen=open.filter(o=>!usesPartyRoom(o.tables,rooms));
+ const order=(a,b)=>(a.minutes-(a.accessiblePreferred?15:0))-(b.minutes-(b.accessiblePreferred?15:0))||Number(!!b.accessiblePreferred)-Number(!!a.accessiblePreferred)||a.minutes-b.minutes||Number(usesPartyRoom(a.tables,rooms))-Number(usesPartyRoom(b.tables,rooms))||a.capacity-b.capacity||a.tables.length-b.tables.length;
+ return {open:(diningOpen.length?diningOpen:open).sort(order).slice(0,5),soon:options.filter(o=>!o.ready&&o.minutes<=30).sort(order).slice(0,5)};
 }
 export function waitRange(estimate){
  if(!estimate)return 'Host review needed';
@@ -46,7 +57,7 @@ export function waitRange(estimate){
  return `${lower}–${upper} min`;
 }
 export function planWaitlist(state,now=Date.now()){
- const settings=waitSettings(state),available=new Map(),context={now,duration:settings.diningMinutes+settings.cleaningMinutes,bookings:scheduledRooms(state),preferredAreas:preferredAreas(state)};
+ const settings=waitSettings(state),available=new Map(),context={now,duration:settings.diningMinutes+settings.cleaningMinutes,bookings:scheduledRooms(state),preferredAreas:preferredAreas(state),partyRoomAreas:partyRoomAreas(state)};
  for(const t of state.tables){
   const elapsed=t.seatedAt?Math.max(0,(now-t.seatedAt)/60000):0;
   const cleaningElapsed=t.cleaningAt?Math.max(0,(now-t.cleaningAt)/60000):0;

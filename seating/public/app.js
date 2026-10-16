@@ -1,4 +1,4 @@
-import {areaOptions,areaName,roomOptions} from './areas.js';
+import {areaOptions,areaName,roomOptions,partyRoomAreas} from './areas.js';
 import {planImage,cleanUpPlan} from './plan-cleanup.js';
 import {drawingBounds,fullPlanBox,tableFocusBox} from './plan-fit.js';
 import {readyTracker} from './ready-alert.js';
@@ -9,7 +9,7 @@ import {planWaitlist,estimateNewParty,seatingOptions,waitRange} from './wait-pla
 import {guestForecast} from './wait-forecast.js';
 import {preferredAreas,preferredSeating} from './accessibility.js';
 import {presetCombinations,includesBoothCombination,childBoothFit} from './combinations.js';
-import { suggestTables } from './suggestions.js';
+import { suggestTables,preferDiningTables } from './suggestions.js';
 import { WALL_PATH, ROOM_LABELS, DOORS, upgradeNumbering, openSeats } from './floor.js';
 const $=id=>document.getElementById(id), NS='http://www.w3.org/2000/svg';
 const demo=new URLSearchParams(location.search).get('demo')==='1';
@@ -345,10 +345,11 @@ function renderSelection(){
 }
 function renderRecommendations(){
   const party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');$('recommend-panel').hidden=editing;$('recommend-context').textContent=party?`${party.name} · ${party.size} guests — best fits first`:'Select a waiting party to find an open table that fits.';if(!party){$('recommendations').replaceChildren();return;}
-  const candidates=suggestTables(walkInTables(state,Date.now(),currentPlan().context.duration),party.size,5,party.accessibility?preferredAreas(state):new Set());
+  let candidates=suggestTables(walkInTables(state,Date.now(),currentPlan().context.duration),party.size,5,party.accessibility?preferredAreas(state):new Set(),partyRoomAreas(state));
   const planned=currentPlan().rows.find(r=>r.party.id===party.id)?.estimate;
   if(planned?.ready){const key=ts=>ts.map(t=>t.id).sort().join('|'),index=candidates.findIndex(ts=>key(ts)===key(planned.tables));if(index>=0)candidates.splice(index,1);candidates.unshift(planned.tables);}
   candidates.push(...state.tables.filter(t=>t.status==='open'&&!t.group&&childBoothFit([t],party.size)).slice(0,2).map(t=>[t]));
+  candidates=preferDiningTables(candidates,partyRoomAreas(state));
   $('recommendations').replaceChildren(...candidates.map(ts=>{const b=el('button',{class:'suggestion'}),info=el('span');info.append(el('strong',{},ts.map(label).join(' + ')),el('small',{},`${ts.reduce((n,t)=>n+t.capacity,0)} seats · ${childBoothFit(ts,party.size)?'Small-child override required':includesBoothCombination(ts)?'Booth + table · confirm fit':ts.length>1?'Nearby combination':'Open table'}`));b.append(info,el('span',{},'→'));b.onclick=()=>{combining=false;selected=new Set(ts.map(t=>t.id));renderSelection();showSidebar('details');focusTables(ts);};return b;}));
   if(planned&&!planned.ready)$('recommendations').append(el('p',{class:'estimate-note'},`Expected next: ${planned.tables.map(label).join(' + ')} · ${waitRange(planned)}${planned.accessiblePreferred?' · Accessibility preferred':''}. Host must confirm the table is clear.`));
   if(!candidates.length)$('recommendations').append(el('p',{class:'empty'},'No available fit. A manager can confirm booth capacities or approve table combinations in Layout editor.'));
