@@ -78,7 +78,7 @@ test('paired local hosts keep working offline, survive restart, and competing wr
  await reopened.cycle();assert.equal(reopened.runtime().online,false);
  const action={version:0,action:{type:'addParty',name:'Offline guest',size:4}};
  const results=await Promise.all([localRequest(reopened,'/api/locations/waco/actions',action,cookie),localRequest(reopened,'/api/locations/waco/actions',action,cookie)]);assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);
- const state=await(await localRequest(reopened,'/api/locations/waco/state',null,cookie)).json();assert.equal(state.state.parties.length,1);assert.equal(state.connection.online,false);
+ const state=await(await localRequest(reopened,'/api/locations/waco/state',null,cookie)).json();assert.equal(state.state.parties.length,1);assert.equal(state.connection.online,false);assert.ok(state.state.parties[0].waitQuote.latestAt>=state.state.parties[0].arrivedAt);
  assert.equal((await localRequest(reopened,'/api/locations/another/state',null,cookie)).status,404);
  assert.equal((await localRequest(reopened,'/api/locations/waco/actions',{version:1,action:{type:'saveArea',name:'Unauthorized',kind:'room'}},cookie)).status,403);
  assert.equal((await localRequest(reopened,'/api/guest/waco',{action:'join'})).status,503);
@@ -90,7 +90,7 @@ test('hub bootstraps atomically, synchronizes local changes, and executes cloud 
  const app=createLocalServer({locationId:'waco',token:'secret',cloudUrl:'https://cloud.example.test',publicUrl:'https://waco.local:8443',directory,noTimer:true,fetch:(url,options={})=>cloud.call(options.body?JSON.parse(options.body):null)});closeAfter(t,()=>app.close());
  await app.cycle();assert.equal(app.runtime().active,true);assert.equal(app.runtime().online,true);assert.equal(hubOnline(await cloud.db.prepare('SELECT * FROM seating_hubs').get()),true);
  const next=applyAction(cloud.store.snapshot('waco').state,{type:'addParty',name:'Cloud guest',size:4},'host');
- const pending=relaySave(cloud.env,'waco',0,next,'unique-command',2000);await new Promise(r=>setTimeout(r,20));await app.cycle();const response=await pending;assert.equal(response.status,200);assert.equal(app.store.snapshot('waco').state.parties.length,1);
+ const pending=relaySave(cloud.env,'waco',0,next,'unique-command',2000);await new Promise(r=>setTimeout(r,20));await app.cycle();const response=await pending;assert.equal(response.status,200);assert.equal(app.store.snapshot('waco').state.parties.length,1);assert.deepEqual(app.store.snapshot('waco').state.parties[0].waitQuote,next.parties[0].waitQuote);assert.deepEqual(cloud.store.snapshot('waco').state.parties[0].waitQuote,next.parties[0].waitQuote);
  const command=cloud.db.prepare('SELECT * FROM seating_commands').get();assert.equal(processCommand(app.store,'waco',command).version,1);assert.equal(app.store.snapshot('waco').version,1);
  assert.equal(cloud.store.snapshot('waco').state.parties[0].name,'Cloud guest');
  await assert.rejects(cloud.call(null,'wrong'),/authorization/);

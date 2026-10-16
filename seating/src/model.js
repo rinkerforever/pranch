@@ -3,6 +3,7 @@ import {areaOptions,roomCombinations} from '../public/areas.js';
 import {presetCombinations,includesBoothCombination,childBoothFit} from '../public/combinations.js';
 import { initialTables } from '../public/floor.js';
 import {waitSettings,planWaitlist} from '../public/wait-plan.js';
+import {quoteForParty} from '../public/wait-forecast.js';
 export class AppError extends Error { constructor(message, status=400) { super(message); this.status=status; } }
 const fail = message => { throw new AppError(message); };
 const integer = (v,min,max) => Number.isInteger(v) && v>=min && v<=max;
@@ -153,7 +154,8 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
     const name=clean(action.name,80), size=Number(action.size), notes=clean(action.notes,300);
     if(!name || !integer(size,1,100)) fail('Enter a name and party size between 1 and 100.');
     if(state.parties.filter(p=>p.status==='waiting').length>=200) fail('The waiting list is full.');
-    state.parties.push({id:uuid(),name,size,notes,...equipment(action),arrivedAt:now,status:'waiting'});
+    const party={id:uuid(),name,size,notes,...equipment(action),arrivedAt:now,status:'waiting'};
+    state.parties.push(party);party.waitQuote=quoteForParty(state,party,now);
   } else if(type==='editParty') {
     const party=state.parties.find(p=>p.id===action.id && p.status==='waiting');
     if(!party) fail('This party is no longer waiting.');

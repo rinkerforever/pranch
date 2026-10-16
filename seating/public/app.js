@@ -6,13 +6,14 @@ import {connectionIndicator} from './connection-indicator.js';
 import {installApp,runtimeInfo,pairLocalServer,layoutSettings} from './device.js';
 import {roomInfo,activeRoomBlocks,scheduledRooms,walkInTables} from './rooms.js';
 import {planWaitlist,estimateNewParty,seatingOptions,waitRange} from './wait-plan.js';
+import {guestForecast} from './wait-forecast.js';
 import {preferredAreas,preferredSeating} from './accessibility.js';
 import {presetCombinations,includesBoothCombination,childBoothFit} from './combinations.js';
 import { suggestTables } from './suggestions.js';
 import { WALL_PATH, ROOM_LABELS, DOORS, upgradeNumbering, openSeats } from './floor.js';
 const $=id=>document.getElementById(id), NS='http://www.w3.org/2000/svg';
 const demo=new URLSearchParams(location.search).get('demo')==='1';
-let state=null,version=0,profile=null,locations=[],locationId=null,role='viewer',selected=new Set(),partyId=null,editing=false,tableDraft=null,editGuest=null,busy=false,view='Dining',viewBox=[140,550,1495,360],toastTimer,uploadBusy=false;
+let state=null,version=0,profile=null,locations=[],locationId=null,role='viewer',selected=new Set(),partyId=null,editing=false,tableDraft=null,editGuest=null,busy=false,view='All',viewBox=[0,-20,1660,950],toastTimer,uploadBusy=false;
 let demoModel;
 let runtime={mode:'cloud'},transportReady=false,connection=null,alerts=readyTracker();
 let backgroundFit=null,viewFitted=true;
@@ -20,6 +21,25 @@ let combining=false;
 let seatNowMode=false,guestAdviceKey='';
 let recoveringAccess=false;
 let lastConnectionConfirmed=0,seatingReachable=true;
+let activeScreen=location.hash==='#waitlist'?'waitlist':'floor';
+function renderScreen(){
+ $('app').dataset.screen=activeScreen;
+ history.replaceState(null,'',activeScreen==='waitlist'?'#waitlist':'#floor');
+ const allowed=!!state&&locations.some(l=>l.id===locationId);
+ $('workspace').hidden=!allowed||activeScreen!=='floor';$('waitlist-screen').hidden=!allowed||activeScreen!=='waitlist';
+ $('live-tab').classList.toggle('active',activeScreen==='floor');$('waitlist-open').classList.toggle('active',activeScreen==='waitlist');
+ $('live-tab').setAttribute('aria-current',activeScreen==='floor'?'page':'false');$('waitlist-open').setAttribute('aria-current',activeScreen==='waitlist'?'page':'false');
+ $('page-title').textContent=activeScreen==='waitlist'?'Waiting list':editing?'Layout editor':'Live floor';
+ $('edit-tab').hidden=activeScreen!=='floor'||!canEdit();$('floor-wait-open').hidden=activeScreen!=='floor'||editing;
+ $('phone-floor').setAttribute('aria-pressed',activeScreen==='floor');$('phone-wait').setAttribute('aria-pressed',activeScreen==='waitlist');
+}
+function setScreen(screen){
+ activeScreen=screen;closeSidebar();$('app').classList.remove('phone-menu-open');
+ if(screen==='waitlist')editing=false;
+ renderScreen();if(state){if(screen==='waitlist')renderWaitlistView();else{render();requestAnimationFrame(()=>renderFloor());}}
+}
+const forecastTime=stamp=>new Date(stamp).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+const forecastWindowText=window=>`${forecastTime(window.earliestAt)}–${forecastTime(window.latestAt)}`;
 function renderConnection(){
  const status=connectionIndicator({mode:runtime.mode,confirmedAt:lastConnectionConfirmed,reachable:seatingReachable,connection,preview:demo});
  if(status.label.includes('Disconnected'))transportReady=false;
@@ -71,13 +91,13 @@ async function loadSession(){
   $('staff-open').hidden=!profile.system_admin;$('location').replaceChildren(...locations.map(l=>new Option(l.name,l.id)));
   $('local-server-open').hidden=demo||runtime.mode==='local'||!profile.system_admin;
   $('logout').textContent=runtime.mode==='local'?'Lock / switch employee':'Sign out';
-  $('no-access').hidden=locations.length>0;$('workspace').hidden=!locations.length;
+  $('no-access').hidden=locations.length>0;renderScreen();
   if(locations.length){if(matchMedia('(max-width:599px)').matches)setView('C');locationId=locations[0].id;role=locations[0].role;await refresh(true);}
 }
 async function recoverLocationAccess(){
   if(recoveringAccess)return;
   recoveringAccess=true;transportReady=false;state=null;locationId=null;version=-1;selected.clear();partyId=null;tableDraft=null;editing=false;combining=false;
-  $('workspace').hidden=true;$('floor').replaceChildren();$('location').replaceChildren();
+  $('workspace').hidden=true;$('waitlist-screen').hidden=true;$('floor').replaceChildren();$('location').replaceChildren();
   for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
   showReadyAlert();
   try{await loadSession();toast('Your restaurant access changed. Available locations have been updated.');}
@@ -86,6 +106,8 @@ async function recoverLocationAccess(){
 }
 function demoInitial(){let s=demoModel.initialState();
   s.parties=[{id:'johnson',name:'Johnson',size:6,notes:'Prefers main dining room',arrivedAt:Date.now()-18*60000,status:'waiting'},{id:'miller',name:'Miller',size:2,notes:'',arrivedAt:Date.now()-12*60000,status:'waiting'},{id:'davis',name:'Davis',size:4,notes:'One high chair',arrivedAt:Date.now()-8*60000,status:'waiting'}];
+  // Explicit example quotes in preview data only; live history is never backfilled.
+  for(const p of s.parties)p.waitQuote={recordedAt:p.arrivedAt,partySize:p.size,earliestAt:p.arrivedAt+10*60000,latestAt:p.arrivedAt+15*60000,tableIds:[]};
   for(const t of s.tables){if(['C-61','C-41','B-30','A-21','Piney Woods-21'].includes(t.id)){t.status='in_use';t.seatedAt=Date.now()-30*60000;}if(['C-70','A-42'].includes(t.id))t.status='cleaning';}
   s.tables.find(t=>t.id==='B-70').allowed=['B-60'];s.tables.find(t=>t.id==='B-60').allowed=['B-70'];return s;
 }
@@ -119,7 +141,7 @@ function canEdit(){return transportReady&&['admin','manager'].includes(role);}
 function label(t){return /^[A-Z]+\d/i.test(t.number)?t.number:`${areaName(state,t.area)}-${t.number}`;}
 function minutes(stamp){return Math.max(0,Math.floor((Date.now()-stamp)/60000));}
 function groupTables(t){return t.group?state.tables.filter(o=>o.group===t.group):[t];}
-function updatePhoneNav(waiting){$('phone-floor').setAttribute('aria-pressed',!waiting);$('phone-wait').setAttribute('aria-pressed',waiting);}
+function updatePhoneNav(){ $('phone-floor').setAttribute('aria-pressed',activeScreen==='floor');$('phone-wait').setAttribute('aria-pressed',activeScreen==='waitlist'); }
 function showSidebar(panel){updatePhoneNav(panel==='waiting');$('workspace').dataset.panel=panel;$('workspace').classList.add('sidebar-open');$('tablet-wait').setAttribute('aria-expanded',panel==='waiting');$('tablet-details').setAttribute('aria-expanded',panel==='details');}
 function closeSidebar(){updatePhoneNav(false);$('workspace').classList.remove('sidebar-open');for(const id of ['tablet-wait','tablet-details'])$(id).setAttribute('aria-expanded','false');}
 function chooseTable(t){
@@ -207,7 +229,7 @@ function renderFloor(){
 }
 let planCache=null,planState=null,planMinute=-1;
 function currentPlan(){const minute=Math.floor(Date.now()/60000);if(planState!==state||planMinute!==minute){planCache=planWaitlist(state);planState=state;planMinute=minute;}return planCache;}
-function chooseWaitingParty(p,tables=[]){combining=false;partyId=p.id;selected=new Set(tables.map(t=>t.id));editing=false;if(tables.length)setView(tables[0].area);render();showSidebar(tables.length?'details':'waiting');}
+function chooseWaitingParty(p,tables=[]){combining=false;partyId=p.id;selected=new Set(tables.map(t=>t.id));editing=false;activeScreen='floor';renderScreen();if(tables.length)setView(tables[0].area);render();showSidebar('details');}
 function renderQuote(){if(!state)return;const estimate=estimateNewParty(currentPlan(),Number($('estimate-size').value),{accessibility:$('estimate-accessibility').checked});$('estimate-result').textContent=waitRange(estimate);}
 function renderGuestQuote(){
  if(!state)return;const size=Number($('guest-size').value),preferences={accessibility:$('guest-accessibility').checked},plan=currentPlan();
@@ -232,36 +254,47 @@ function renderGuestQuote(){
  $('seat-now-soon').append(el('p',{class:'muted'},'Forecasts include the current queue. Occupied or cleaning tables must be cleared by staff before seating; estimates do not reserve a table.'));
 }
 function renderWaitlistView(){
- if(!$('waitlist-dialog').open)return;
+ if(activeScreen!=='waitlist'||!state)return;
  const plan=currentPlan(),rows=plan.rows,ready=rows.filter(r=>r.estimate?.ready).length;
  $('waitlist-location').textContent=locations.find(l=>l.id===locationId)?.name||'';
- $('waitlist-summary').textContent=`${rows.length} parties · ${rows.reduce((n,r)=>n+r.party.size,0)} guests · ${ready} ready to seat`;
+ const now=Date.now(),late=rows.filter(r=>guestForecast(r.party,r.estimate,now).pastEstimate).length;
+ const summary=$('waitlist-summary');summary.replaceChildren();
+ for(const [value,title,note,tone] of [[rows.length,'parties',`${rows.reduce((n,r)=>n+r.party.size,0)} guests waiting`,''],[ready,'ready to seat','Review the open table','ready'],[late,'past estimate','Review these guests first','late'],[rows.length?Math.max(...rows.map(r=>minutes(r.party.arrivedAt))):0,'min','Longest current wait','']]){const card=el('div',{class:`wait-stat ${tone}`});card.append(el('strong',{},`${value} ${title}`),el('small',{},note));summary.append(card);}
+ $('waitlist-updated').textContent=`Forecasts updated ${forecastTime(lastConnectionConfirmed||now)} · Times are estimates, not table reservations.`;
+ $('waitlist-add').disabled=!canWrite();
  $('wait-estimate-basis').textContent=`${plan.settings.source}: ${plan.settings.diningMinutes} min dining + ${plan.settings.cleaningMinutes} min cleaning. Uses time already seated and current queue. Overdue occupied tables keep a 10-minute buffer. Update table statuses promptly.`;
  $('waitlist-empty').hidden=rows.length>0;
  $('waitlist-rows').replaceChildren(...rows.map(({party:p,estimate,combinationPriority},i)=>{
-  const row=el('tr',{class:estimate?.ready?'ready-row':''}),guest=el('td'),wait=el('td',{},`${minutes(p.arrivedAt)} min`),eta=el('td'),table=el('td'),action=el('td');
+  const forecast=guestForecast(p,estimate,now),row=el('tr',{class:`${estimate?.ready?'ready-row ':''}${forecast.pastEstimate?'past-estimate-row':''}`}),guest=el('td'),wait=el('td'),eta=el('td'),table=el('td'),action=el('td');
+  wait.append(el('strong',{},`${forecast.waitedMinutes} min`),el('small',{},`Arrived ${forecastTime(p.arrivedAt)}`));
   guest.append(el('strong',{},`${i+1}. ${p.name}`),el('small',{},`${p.size} guests${p.highChair?' · High chair':''}${p.booster?' · Booster':''}`));
   if(p.accessibility)guest.append(el('small',{},'Accessibility-preferred seating'));
   if(p.notes)guest.append(el('small',{},p.notes));
   if(combinationPriority)guest.append(el('span',{class:'combination-tag'},'Combination priority'));
-  eta.append(el('strong',{},waitRange(estimate)));
+  eta.append(el('strong',{},estimate?.ready?'Ready to seat now':forecast.current?forecastWindowText(forecast.current):'Host review needed'));
+  if(!estimate?.ready&&forecast.current)eta.append(el('small',{},`About ${forecast.current.lower}–${forecast.current.upper} min more`));
+  eta.append(el('small',{},forecast.original?`Original window: ${forecastWindowText(forecast.original)}`:'Original estimate not recorded'));
+  if(forecast.original&&forecast.original.partySize!==p.size)eta.append(el('small',{},`Original estimate was for ${forecast.original.partySize} guests`));
+  if(forecast.pastEstimate)eta.append(el('strong',{class:'overdue-estimate'},`${forecast.pastMinutes} min past original window`));
   table.append(el('span',{},estimate?estimate.tables.map(label).join(' + '):'No configured fit'));
   if(estimate?.accessiblePreferred)table.append(el('small',{},'Accessibility-preferred area'));
   if(estimate&&includesBoothCombination(estimate.tables))table.append(el('small',{},'Includes booth · confirm fit'));
-  const button=el('button',{class:estimate?.ready?'primary small':'small'},estimate?.ready?'Review & seat':'View options');button.onclick=()=>{$('waitlist-dialog').close();chooseWaitingParty(p,estimate?.ready?estimate.tables:[]);};action.append(button);
+  if(estimate&&!estimate.ready){const occupied=estimate.tables.filter(t=>t.status==='in_use'),cleaning=estimate.tables.filter(t=>t.status==='cleaning');table.append(el('small',{},occupied.length?(occupied.some(t=>t.seatedAt)?`Guests still dining · longest seated ${Math.max(...occupied.filter(t=>t.seatedAt).map(t=>minutes(t.seatedAt)))} min · then cleaning`:'Guests still dining · seated time not recorded'):cleaning.length?'Cleaning must be completed':'Waiting behind planned parties / room bookings'));}
+  const button=el('button',{class:estimate?.ready?'primary small':'small'},estimate?.ready?'Review & seat':'View options');button.onclick=()=>chooseWaitingParty(p,estimate?.ready?estimate.tables:[]);action.append(button);
+  if(canWrite()){const edit=el('button',{class:'quiet small'},'Review / edit guest');edit.onclick=()=>openGuest(p);action.append(edit);const remove=el('button',{class:'quiet small danger'},'Remove');remove.onclick=async()=>{if(await confirmChange('Remove waiting party?',`Remove ${p.name} from the waiting list?`))await act({type:'cancelParty',id:p.id});};action.append(remove);}
   row.append(guest,wait,eta,table,action);return row;
  }));renderQuote();
 }
 function renderWait(){
   const plan=currentPlan();renderWaitlistView();if($('guest-dialog').open)renderGuestQuote();
-  const waiting=state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt);$('wait-count').textContent=waiting.length;$('tablet-wait-count').textContent=waiting.length;$('phone-wait-count').textContent=waiting.length;$('add-guest').disabled=!canWrite();
+  const waiting=state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt);$('rail-wait-count').textContent=waiting.length;$('wait-count').textContent=waiting.length;$('tablet-wait-count').textContent=waiting.length;$('phone-wait-count').textContent=waiting.length;$('add-guest').disabled=!canWrite();
   if(!waiting.length){$('wait-list').replaceChildren(el('div',{class:'empty'},'Everyone is seated. Add a party when guests arrive.'));return;}
   $('wait-list').replaceChildren(...waiting.map((p,index)=>{
     const planned=plan.rows.find(r=>r.party.id===p.id),ready=!!planned?.estimate?.ready;
     const row=el('div',{class:`guest${p.id===partyId?' active':''}${ready?' ready-row':''}`,tabindex:0,role:'button','aria-label':`${p.name}, ${p.size} guests, waiting ${minutes(p.arrivedAt)} minutes`});
     const main=el('div',{class:'guest-main'});main.append(el('strong',{},p.name),el('small',{},`#${index+1}`));
     const meta=el('div',{class:'guest-meta'});meta.append(el('span',{},`${p.size} guests`),el('span',{},`${minutes(p.arrivedAt)} min wait`));row.append(main,meta);
-    row.append(el('p',{class:'wait-estimate'},waitRange(planned?.estimate)));if(planned?.combinationPriority)row.append(el('span',{class:'combination-tag'},'Combination priority'));
+    row.append(el('p',{class:'wait-estimate'},waitRange(planned?.estimate)));const forecast=guestForecast(p,planned?.estimate);if(forecast.pastEstimate)row.append(el('small',{class:'overdue-estimate'},`${forecast.pastMinutes} min past original estimate`));if(planned?.combinationPriority)row.append(el('span',{class:'combination-tag'},'Combination priority'));
     if(p.source==='qr')row.append(el('small',{class:'qr-source'},p.readyAt?'QR guest · Ready — return to host':'QR guest check-in'));
     if(p.highChair||p.booster||p.accessibility)row.append(el('p',{class:'equipment-badges'},[p.highChair?'High chair':null,p.booster?'Booster seat':null,p.accessibility?'Accessible seating preferred':null].filter(Boolean).join(' · ')));
     if(p.notes)row.append(el('p',{class:'guest-note'},p.notes));
@@ -277,6 +310,9 @@ function renderSelection(){
   if(!canWrite())box.append(el('p',{class:'read-only-note'},'View-only access. Ask an administrator for host access to make changes.'));
   if(party)box.append(el('p',{class:'muted'},`${party.size} guests · Choose a table below or tap tables on the floor.`));
   if(party?.accessibility)box.append(el('p',{class:'equipment-badges'},'Accessible seating preferred · confirm fit and route with the guest.'));
+  if(!party&&canWrite()&&tables.length&&tables.every(t=>t.status==='open')){
+   const waiting=state.parties.filter(p=>p.status==='waiting');if(waiting.length){const field=el('label',{},'Seat a waiting guest'),select=el('select',{'aria-label':'Choose waiting guest for selected tables'});select.append(new Option('Choose a guest...', ''));for(const p of waiting)select.append(new Option(`${p.name} · ${p.size} guests`,p.id));select.onchange=()=>{if(select.value){partyId=select.value;renderSelection();renderRecommendations();}};field.append(select);box.append(field);}
+  }
   if(!tables.length){box.append(el('div',{class:'empty'},party?'Choose a suggestion or select tables on the floor.':'Select a table to see seats, status, and available actions.'));return;}
   const summary=el('div',{class:'selection-summary'}),capacity=tables.reduce((n,t)=>n+(t.capacity||0),0),unknown=tables.some(t=>!t.capacity);
   summary.append(el('strong',{},tables.map(label).join(' + ')),el('p',{},unknown?'Capacity unconfirmed':`${capacity} seats total`));
@@ -345,7 +381,7 @@ function render(){
   $('phone-location').textContent=locations.find(l=>l.id===locationId)?.name||'';
   $('edit-tab').hidden=!canEdit();if(!canEdit())editing=false;$('tablet-wait').hidden=editing;
   $('live-tab').classList.toggle('active',!editing);$('edit-tab').classList.toggle('active',editing);$('editor-toolbar').hidden=!editing;$('wait-panel').hidden=editing;$('selection-panel').hidden=editing;$('layout-panel').hidden=!editing||!tableDraft;
-  $('page-title').textContent=editing?'Make the floor yours.':'Let’s get everyone seated.';
+  renderScreen();
   renderAreas();renderFloor();renderWait();renderSelection();renderRecommendations();renderRoomBookings();showReadyAlert();
   // Keep unsaved layout fields intact while live state polls update the floor.
 }
@@ -359,9 +395,13 @@ function openGuest(p=null,immediate=false){
 $('login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;$('login-error').textContent='';try{await api('/api/login',{method:'POST',body:JSON.stringify(runtime.mode==='local'?{pin:$('local-pin').value}:{email:$('email').value,password:$('password').value})});$('password').value='';$('local-pin').value='';await loadSession();}catch(error){$('login-error').textContent=error.message;}finally{b.disabled=false;}};
 $('logout').onclick=async()=>{if(!demo)await api('/api/logout',{method:'POST'});locationId=null;state=null;transportReady=false;alerts=readyTracker();showReadyAlert();$('app').hidden=true;$('login').hidden=false;if(demo)location.href='/';};
 $('location').onchange=async()=>{combining=false;locationId=$('location').value;role=locations.find(l=>l.id===locationId).role;selected.clear();partyId=null;tableDraft=null;editing=false;version=-1;alerts=readyTracker();await refresh(true);};
-$('live-tab').onclick=()=>{$('app').classList.remove('phone-menu-open');closeSidebar();editing=false;tableDraft=null;render();};$('edit-tab').onclick=()=>{combining=false;$('app').classList.remove('phone-menu-open');closeSidebar();editing=true;partyId=null;tableDraft=null;selected.clear();render();toast('Select a table to edit its capacity, chairs, or allowed combinations.');};
-$('phone-floor').onclick=closeSidebar;$('phone-wait').onclick=()=>{editing=false;render();showSidebar('waiting');};$('phone-more').onclick=()=>{const open=$('app').classList.toggle('phone-menu-open');$('phone-more').setAttribute('aria-expanded',open);};
-$('tablet-wait').onclick=()=>showSidebar('waiting');$('tablet-details').onclick=()=>showSidebar('details');$('sidebar-close').onclick=closeSidebar;
+$('live-tab').onclick=()=>{editing=false;tableDraft=null;setScreen('floor');};$('edit-tab').onclick=()=>{combining=false;$('app').classList.remove('phone-menu-open');closeSidebar();activeScreen='floor';editing=!editing;partyId=null;tableDraft=null;selected.clear();render();if(editing)toast('Select a table to edit its capacity, chairs, or allowed combinations.');};
+$('phone-floor').onclick=()=>{editing=false;setScreen('floor');};$('phone-wait').onclick=()=>openWaitlist();
+const openAppSettings=()=>$('app-settings-dialog').showModal();
+for(const id of ['phone-more','phone-settings','app-settings-open','app-settings-rail'])$(id).onclick=openAppSettings;
+$('phone-bookings').onclick=()=>openRoomBookings();
+$('app-settings-dialog').addEventListener('click',e=>{if(e.target.closest('button:not(.close-dialog)'))$('app-settings-dialog').close();});
+$('tablet-wait').onclick=()=>openWaitlist();$('tablet-details').onclick=()=>showSidebar('details');$('sidebar-close').onclick=closeSidebar;
 $('add-guest').onclick=()=>openGuest();$('clear-selection').onclick=()=>{selected.clear();renderFloor();renderSelection();};
 $('combine-select').onclick=()=>{if(busy||!canWrite())return;if(combining){if(selected.size>=2)showSidebar('details');return;}combining=true;selected.clear();closeSidebar();renderFloor();renderSelection();toast('Tap the open tables you want to combine, then tap Review.');};
 $('combine-cancel').onclick=()=>{combining=false;selected.clear();closeSidebar();renderFloor();renderSelection();};
@@ -452,7 +492,8 @@ $('checkin-form').onsubmit=async e=>{e.preventDefault();const button=$('checkin-
 
 $('preset-combinations').onclick=async()=>{if(await confirmChange('Preset nearby combinations?','Add links between neighboring tables in this sectioned floor plan. Existing links stay available. Booth combinations require a notice before use. Review links after moving tables or uploading a different plan.')){if(await act({type:'presetCombinations'})){tableDraft=null;render();toast('Nearby combinations are ready.');}}};
 
-$('waitlist-open').onclick=()=>{if(!state)return;const settings=currentPlan().settings;$('dining-minutes').value=settings.diningMinutes;$('cleaning-minutes').value=settings.cleaningMinutes;for(const id of ['dining-minutes','cleaning-minutes','wait-settings-save','wait-settings-auto'])$(id).disabled=!canWrite();$('waitlist-dialog').showModal();renderWaitlistView();};
+function openWaitlist(){if(!state)return;const settings=currentPlan().settings;$('dining-minutes').value=settings.diningMinutes;$('cleaning-minutes').value=settings.cleaningMinutes;for(const id of ['dining-minutes','cleaning-minutes','wait-settings-save','wait-settings-auto'])$(id).disabled=!canWrite();setScreen('waitlist');}
+$('waitlist-open').onclick=openWaitlist;$('floor-wait-open').onclick=openWaitlist;$('waitlist-add').onclick=()=>{if(canWrite())openGuest();};
 $('estimate-size').oninput=renderQuote;$('estimate-accessibility').onchange=renderQuote;
 for(const id of ['guest-size','guest-accessibility'])$(id).addEventListener(id==='guest-size'?'input':'change',()=>{guestAdviceKey='';$('seat-now-options').replaceChildren();renderGuestQuote();});
 $('wait-settings-auto').onclick=async()=>{if(await act({type:'waitSettings',automatic:true})){const settings=currentPlan().settings;$('dining-minutes').value=settings.diningMinutes;$('cleaning-minutes').value=settings.cleaningMinutes;toast('Estimates will use the recent dining average when at least 3 visits are recorded.');}};
