@@ -28,11 +28,11 @@ export function connected(tables) {
 function completeGroups(state,tables) {
   for(const t of tables) if(t.group && state.tables.some(o=>o.group===t.group && !tables.includes(o))) fail('Select the entire combined table group.');
 }
-function combineCheck(state,tables) {
+function combineCheck(state,tables,override=false) {
   completeGroups(state,tables);
   if(tables.some(t=>t.status!=='open')) fail('Only open tables can be combined or seated.');
   if(tables.length>1 && new Set(tables.map(t=>t.group)).size===1 && tables[0].group) return;
-  if(tables.length>1 && (!connected(tables) || new Set(tables.map(t=>t.area)).size!==1)) fail('These tables are not an approved combination. A manager can configure combinations in Layout editor.');
+  if(!override&&tables.length>1 && (!connected(tables) || new Set(tables.map(t=>t.area)).size!==1)) fail('These tables are not an approved combination. Use the host combination override after confirming they can be used together.');
 }
 export function applyAction(original, action, role, now=Date.now(), uuid=()=>crypto.randomUUID()) {
   const state=structuredClone(original);
@@ -188,7 +188,9 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
     for(const t of tables) Object.assign(t,{status:'in_use',group,party:party.id,seatedAt:now});
     Object.assign(party,{status:'seated',seatedAt:now,tables:tables.map(t=>t.id)});
   } else if(type==='combine') {
-    const tables=selectedTables(state,action.ids);if(tables.length<2) fail('Select at least two tables.');combineCheck(state,tables);
+    const tables=selectedTables(state,action.ids);if(tables.length<2) fail('Select at least two tables.');combineCheck(state,tables,action.combinationOverride===true);
+    if(tables.some(t=>t.roomBlock))fail('Manage this whole-room block from Room bookings.');
+    const timing=waitSettings(state);if(protectsBooking(state,tables,now,now+(timing.diningMinutes+timing.cleaningMinutes)*60000))fail('These tables are needed for an upcoming room booking.');
     if(includesBoothCombination(tables)&&action.boothAcknowledged!==true)fail('Confirm the booth combination notice before combining.');
     const group=uuid();for(const t of tables)t.group=group;
   } else if(type==='split') {

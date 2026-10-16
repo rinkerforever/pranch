@@ -181,3 +181,5 @@
  .open-seat-total strong{font-size:14px}
  .legend{gap:8px}
 }
+
+.pin-keypad{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:4px 0 16px}.pin-keypad[hidden]{display:none}.pin-keypad button{min-height:56px;font-size:24px;touch-action:manipulation}.pin-keypad button[aria-label="Clear"],.pin-keypad button[aria-label="Delete last digit"]{font-size:17px}#local-pin{text-align:center;font-size:30px;letter-spacing:14px;caret-color:transparent}

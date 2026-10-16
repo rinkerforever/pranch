@@ -339,7 +339,17 @@ function renderSelection(){
   const actions=el('div',{class:'actions'});
   for(const status of ['open','in_use','cleaning']){const b=el('button',{class:'small'},status==='in_use'?'Mark in use':status==='open'?'Mark open':'Cleaning');b.onclick=async()=>{if(tables.some(t=>t.party)&&status!=='in_use'&&!await confirmChange('Clear seated party?',`Mark ${tables.map(label).join(' + ')} ${names[status].toLowerCase()} and finish the seated party?`))return;if(await act({type:'status',ids:[...selected],status}))closeSidebar();};actions.append(b);}box.append(actions);
   const grouping=el('div',{class:'actions'});
-  if(tables.length>1&&tables.every(t=>t.status==='open')){const b=el('button',{class:'small'},'Combine tables');b.onclick=async()=>{const boothAcknowledged=includesBoothCombination(tables);if(boothAcknowledged&&!await confirmChange('Confirm booth combination',boothNotice))return;await act({type:'combine',ids:tables.map(t=>t.id),boothAcknowledged});};grouping.append(b);}
+  if(tables.length>1&&tables.every(t=>t.status==='open')){
+    const toggle=el('label',{class:'equipment-toggle'}),override=el('input',{type:'checkbox'});
+    toggle.append(override,document.createTextNode('Override combination rules'));
+    box.append(toggle,el('p',{class:'muted'},'Use these tables together without changing the layout. Confirm the fit and clear access; separate them when finished.'));
+    const b=el('button',{class:'small'},'Combine tables');b.onclick=async()=>{
+      const combinationOverride=override.checked,boothAcknowledged=includesBoothCombination(tables);
+      if(combinationOverride&&!await confirmChange('Confirm table combination override',`Combine ${tables.map(label).join(' + ')}? Confirm these tables can serve one party with clear access.${boothAcknowledged?' '+boothNotice:''}`))return;
+      if(!combinationOverride&&boothAcknowledged&&!await confirmChange('Confirm booth combination',boothNotice))return;
+      await act({type:'combine',ids:tables.map(t=>t.id),boothAcknowledged,combinationOverride});
+    };grouping.append(b);
+  }
   if(tables.some(t=>t.group)){const b=el('button',{class:'small'},'Separate tables');b.disabled=tables.some(t=>t.status==='in_use');b.onclick=()=>act({type:'split',ids:[...selected]});grouping.append(b);}box.append(grouping);
 }
 function renderRecommendations(){
@@ -394,7 +404,24 @@ function openGuest(p=null,immediate=false){
  $('guest-size').value=p?.size||2;$('guest-notes').value=p?.notes||'';$('guest-highchair').checked=!!p?.highChair;$('guest-booster').checked=!!p?.booster;$('guest-accessibility').checked=!!p?.accessibility;
  $('guest-save').textContent=seatNowMode?'Seat at selected table':'Save to waiting list';$('guest-save').disabled=false;$('seat-now-panel').hidden=!seatNowMode;$('seat-now-wait').hidden=!seatNowMode;$('seat-now-options').replaceChildren();renderGuestQuote();$('guest-dialog').showModal();$('guest-size').focus();
 }
-$('login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;$('login-error').textContent='';try{await api('/api/login',{method:'POST',body:JSON.stringify(runtime.mode==='local'?{pin:$('local-pin').value}:{email:$('email').value,password:$('password').value})});$('password').value='';$('local-pin').value='';await loadSession();}catch(error){$('login-error').textContent=error.message;}finally{b.disabled=false;}};
+function pinKey(key){
+ if(runtime.mode!=='local'||$('login-form').querySelector('[type=submit]').disabled)return;
+ const field=$('local-pin');
+ if(/^[0-9]$/.test(key)&&field.value.length<4)field.value+=key;
+ else if(key==='Backspace')field.value=field.value.slice(0,-1);
+ else if(key==='Clear'||key==='Delete')field.value='';
+ $('login-error').textContent='';
+}
+for(const key of ['1','2','3','4','5','6','7','8','9','Clear','0','Backspace']){
+ const button=el('button',{type:'button','aria-label':key==='Backspace'?'Delete last digit':key},key==='Backspace'?'⌫':key);
+ button.onclick=()=>pinKey(key);$('pin-keypad').append(button);
+}
+$('login-form').addEventListener('keydown',e=>{
+ if(runtime.mode!=='local'||!['local-pin','pin-keypad'].some(id=>$(id).contains(e.target))||e.ctrlKey||e.metaKey||e.altKey)return;
+ if(/^[0-9]$/.test(e.key)||['Backspace','Delete'].includes(e.key)){e.preventDefault();pinKey(e.key);}
+ if(e.key==='Enter'&&e.target.id==='local-pin'){e.preventDefault();$('login-form').requestSubmit();}
+});
+$('login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter||$('login-form').querySelector('[type=submit]');if(b.disabled)return;if(runtime.mode==='local'&&!/^[0-9]{4}$/.test($('local-pin').value)){$('login-error').textContent='Enter your four-digit PIN.';return;}b.disabled=true;$('login-error').textContent='';try{await api('/api/login',{method:'POST',body:JSON.stringify(runtime.mode==='local'?{pin:$('local-pin').value}:{email:$('email').value,password:$('password').value})});$('password').value='';$('local-pin').value='';await loadSession();}catch(error){$('login-error').textContent=error.message;}finally{b.disabled=false;}};
 $('logout').onclick=async()=>{if(!demo)await api('/api/logout',{method:'POST'});locationId=null;state=null;transportReady=false;alerts=readyTracker();showReadyAlert();$('app').hidden=true;$('login').hidden=false;if(demo)location.href='/';};
 $('location').onchange=async()=>{combining=false;locationId=$('location').value;role=locations.find(l=>l.id===locationId).role;selected.clear();partyId=null;tableDraft=null;editing=false;version=-1;alerts=readyTracker();await refresh(true);};
 $('live-tab').onclick=()=>{editing=false;tableDraft=null;setScreen('floor');};$('edit-tab').onclick=()=>{combining=false;$('app').classList.remove('phone-menu-open');closeSidebar();activeScreen='floor';editing=!editing;partyId=null;tableDraft=null;selected.clear();render();if(editing)toast('Select a table to edit its capacity, chairs, or allowed combinations.');};
@@ -474,7 +501,7 @@ setInterval(()=>{if(document.hidden)return;renderConnection();if(locationId&&Dat
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh(true);});
 window.addEventListener('online',()=>refresh(true));window.addEventListener('offline',()=>{transportReady=false;seatingReachable=false;renderConnection();showReadyAlert();sync(false,'Disconnected · changes unavailable');});
 $('connection-status').onclick=()=>{$('connection-dialog').showModal();renderConnection();};
-async function boot(){runtime=demo?{mode:'cloud'}:await runtimeInfo();const local=runtime.mode==='local';$('local-pin-label').hidden=!local;$('cloud-email-label').hidden=local;$('cloud-password-label').hidden=local;$('email').required=!local;$('password').required=!local;$('local-pin').required=local;$('pin-enroll-open').hidden=!local;$('login-copy').textContent=local?'On the restaurant Wi-Fi, enter your four-digit employee PIN.':'Sign in with your Kiosk Manager account.';await loadSession();}
+async function boot(){runtime=demo?{mode:'cloud'}:await runtimeInfo();const local=runtime.mode==='local';$('local-pin-label').hidden=!local;$('pin-keypad').hidden=!local;$('cloud-email-label').hidden=local;$('cloud-password-label').hidden=local;$('email').required=!local;$('password').required=!local;$('local-pin').required=local;$('pin-enroll-open').hidden=!local;$('login-copy').textContent=local?'On the restaurant Wi-Fi, enter your four-digit employee PIN.':'Sign in with your Kiosk Manager account.';await loadSession();}
 boot().catch(e=>{if(e.status!==401)toast(e.message,true);});
 $('ready-ack').onclick=()=>{alerts.acknowledge(currentPlan().rows);showReadyAlert();};
 $('local-server-open').onclick=()=>pairLocalServer({locationId,api}).catch(e=>toast(e.message,true));
