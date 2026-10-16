@@ -35,6 +35,17 @@ test('competing Seat now requests commit one seated party and preserve accessibi
  assert.deepEqual(responses.map(r=>r.status).sort(),[200,409]);
  const final=await(await f.call('/api/locations/loc/state')).json();assert.equal(final.state.parties.length,1);assert.equal(final.state.parties[0].status,'seated');assert.equal(final.state.parties[0].accessibility,true);assert.equal(final.state.tables.find(t=>t.id===table.id).status,'in_use');
 });
+
+test('undo API rejects a stale floor version and an older undo token after another host changes service',async t=>{
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
+ const f=fixture();t.after(()=>f.sqlite.close());await f.call('/api/locations/loc/state');
+ const first=await(await f.call('/api/locations/loc/actions',{version:0,action:{type:'status',ids:['A-10'],status:'cleaning'}})).json();
+ const second=await(await f.call('/api/locations/loc/actions',{version:1,action:{type:'areaAvailability',area:'A',closed:true}})).json();
+ assert.equal((await f.call('/api/locations/loc/actions',{version:1,action:{type:'undo',undoId:first.state.lastUndo.id}})).status,409);
+ assert.equal((await f.call('/api/locations/loc/actions',{version:2,action:{type:'undo',undoId:first.state.lastUndo.id}})).status,400);
+ const restored=await(await f.call('/api/locations/loc/actions',{version:2,action:{type:'undo',undoId:second.state.lastUndo.id}})).json();
+ assert.equal(restored.version,3);assert.equal(restored.state.closedAreas,undefined);assert.equal(restored.state.tables.find(t=>t.id==='A-10').status,'cleaning');
+});
 test('API enforces auth, origin, location access and viewer read-only',async t=>{
   t.mock.method(globalThis,'fetch',async(url,options)=>new Response(JSON.stringify({id:options.headers.authorization==='Bearer viewer'?'auth-viewer':'auth-admin'}),{status:options.headers.authorization==='Bearer bad'?401:200}));
   const f=fixture();assert.equal((await f.call('/api/session',null,'bad')).status,401);

@@ -4,6 +4,7 @@ import {presetCombinations,includesBoothCombination,childBoothFit} from '../publ
 import { initialTables } from '../public/floor.js';
 import {waitSettings,planWaitlist} from '../public/wait-plan.js';
 import {quoteForParty} from '../public/wait-forecast.js';
+import {areaClosed,recordUndo,undoAvailable,restoreUndo} from '../public/service-ops.js';
 export class AppError extends Error { constructor(message, status=400) { super(message); this.status=status; } }
 const fail = message => { throw new AppError(message); };
 const integer = (v,min,max) => Number.isInteger(v) && v>=min && v<=max;
@@ -30,16 +31,37 @@ function completeGroups(state,tables) {
 }
 function combineCheck(state,tables,override=false) {
   completeGroups(state,tables);
+  if(tables.some(t=>areaClosed(state,t.area)))fail('This section is closed. Reopen it before seating or combining tables.');
   if(tables.some(t=>t.status!=='open')) fail('Only open tables can be combined or seated.');
   if(tables.length>1 && new Set(tables.map(t=>t.group)).size===1 && tables[0].group) return;
   if(!override&&tables.length>1 && (!connected(tables) || new Set(tables.map(t=>t.area)).size!==1)) fail('These tables are not an approved combination. Use the host combination override after confirming they can be used together.');
 }
 export function applyAction(original, action, role, now=Date.now(), uuid=()=>crypto.randomUUID()) {
+ if(action.type==='undo'){
+  if(!['admin','manager','host'].includes(role))throw new AppError('You have view-only access.',403);
+  if(action.undoId!==original.lastUndo?.id||!undoAvailable(original,now))fail('This action can no longer be undone. Another change was made or the five-minute undo window expired.');
+  const state=structuredClone(original);restoreUndo(state);state.history.unshift({type:'undo',at:now});state.history=state.history.slice(0,100);return state;
+ }
+ const state=applyActionCore(original,action,role,now,uuid);
+ state.lastUndo=recordUndo(original,state,action.type,now,uuid());
+ return state;
+}
+function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto.randomUUID()) {
   const state=structuredClone(original);
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
   if(['cleanPlan','saveArea','deleteArea','addRoomCombination','deleteRoomCombination','layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
-  if(['saveArea','deleteArea','addRoomCombination','deleteRoomCombination'].includes(type)){
+  if(type==='areaAvailability'){
+    if(!areaOptions(state).some(a=>a.id===action.area)||typeof action.closed!=='boolean')fail('Choose a valid section.');
+    state.closedAreas={...(state.closedAreas||{})};
+    if(action.closed)state.closedAreas[action.area]={at:now,reason:clean(action.reason,100)||'Temporarily closed'};else delete state.closedAreas[action.area];
+  }else if(type==='partyContact'){
+    const party=state.parties.find(p=>p.id===action.id&&p.status==='waiting');if(!party)fail('This party is no longer waiting.');
+    if(!['called','away','waiting'].includes(action.contact))fail('Choose a valid guest status.');
+    if(action.contact==='called'){if(party.attendance==='away')fail('Return this guest to waiting before calling them.');party.calledAt=now;party.attendance='called';}
+    if(action.contact==='away'){party.attendance='away';party.awayAt=now;}
+    if(action.contact==='waiting'){party.attendance='waiting';party.returnedAt=now;delete party.calledAt;delete party.awayAt;}
+  }else if(['saveArea','deleteArea','addRoomCombination','deleteRoomCombination'].includes(type)){
     const areas=structuredClone(areaOptions(state)),combinations=structuredClone(roomCombinations(state));
     const bookings=[...activeRoomBlocks(state),...scheduledRooms(state).filter(b=>b.endsAt>now)];
     if(type==='saveArea'){
@@ -114,6 +136,7 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
     if(roomConflict(state,room.areas,now,end))fail('This hold would overlap a scheduled room booking. Choose an earlier release time.');
     let party=action.partyId?state.parties.find(p=>p.id===action.partyId&&p.status==='waiting'):null;
     if(action.partyId&&!party)fail('This party is no longer waiting.');
+    if(party?.attendance==='away')fail('Return this guest to waiting before reserving a room.');
     const name=party?.name||clean(action.name,80),size=party?.size||Number(action.size);
     if(!name||!integer(size,1,room.capacity))fail(`Enter a group name and party size from 1 to ${room.capacity}.`);
     const fromWaitlist=!!party;
@@ -127,6 +150,7 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
     const tables=state.tables.filter(t=>t.roomBlock===block.id),party=state.parties.find(p=>p.id===block.partyId);
     if(!party||!tables.length)fail('Room booking is incomplete. Please reload.');
     if(type==='seatRoom'){
+      if(tables.some(t=>areaClosed(state,t.area)))fail('Reopen this section before seating the room booking.');
       if(block.status!=='held')fail('This room is already in use.');
       block.status='in_use';block.seatedAt=now;
       Object.assign(party,{status:'seated',seatedAt:now,tables:tables.map(t=>t.id)});
@@ -177,6 +201,7 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
   } else if(type==='seat') {
     const party=state.parties.find(p=>p.id===action.partyId && p.status==='waiting');
     if(!party) fail('This party has already been seated or removed.');
+    if(party.attendance==='away')fail('Return this guest to waiting before seating.');
     const tables=selectedTables(state,action.ids);combineCheck(state,tables);
     const timing=waitSettings(state);if(protectsBooking(state,tables,now,now+(timing.diningMinutes+timing.cleaningMinutes)*60000))fail('These tables are needed for an upcoming room booking. Use Room bookings or choose other tables.');
     if(tables.some(t=>!t.capacity)) fail('Set the capacity for these booths before assigning a party.');
@@ -201,6 +226,7 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
   } else if(type==='status') {
     if(!['open','in_use','cleaning'].includes(action.status)) fail('Choose a valid status.');
     const tables=selectedTables(state,action.ids);completeGroups(state,tables);
+    if(action.status==='in_use'&&tables.some(t=>areaClosed(state,t.area)))fail('This section is closed. Reopen it before seating.');
     if(tables.some(t=>t.roomBlock))fail('Manage this whole-room block from Room bookings.');
     const timing=waitSettings(state);if(action.status==='in_use'&&protectsBooking(state,tables,now,now+(timing.diningMinutes+timing.cleaningMinutes)*60000))fail('These tables are needed for an upcoming room booking.');
     if(action.status!=='in_use'){

@@ -64,3 +64,12 @@ In **Areas & rooms**, mark each appropriate area **Accessibility preferred / clo
 
 
 Use two real iPads: add a guest from one and observe it on the other; race two parties for the same table; test PIN lockout and role restrictions; unplug only the internet uplink while keeping Wi-Fi/ethernet powered; verify public QR submissions fail and host additions continue; reconnect and verify no duplicates or lost updates; restart the Pi and confirm saved state; test room cleanup, pulse acknowledgment and Home Screen launch in both orientations. Browser emulation does not replace these device/network checks.
+
+## Host service tools
+
+- Undo appears for the latest eligible table, seating, combination, guest removal/attendance, or section availability action. It expires after five minutes. A later action invalidates the previous token; API version checks and affected-record checks reject stale undo attempts. Room bookings and layout edits are not undoable.
+- Busser lists cleaning groups longest-waiting first. Green cards identify guests who would be ready if that group were cleaned, accounting for the queue and room bookings. Ready opens the whole group; mixed-status groups and room blocks must be managed from the floor or Room bookings.
+- Sections can be closed/reopened by hosts, managers and administrators. Closures persist until explicitly reopened and remove tables from estimates, recommendations and open-seat totals without clearing existing guests or future bookings. A group crossing a closed section is unavailable as a whole.
+- Called records the host's call time; it does not send a message. Not here pauses table planning for that guest. Return to waiting restores planning with the original arrival time and quote. The guest must be returned before seating.
+- The waitlist retains the original quoted window, current estimate and overdue indicator, and explains occupied tables, cleaning, combinations and queue/booking delays. These are forecasts, never automatic table releases.
+- These tools use the existing versioned state and synchronization cycle, with no additional polling endpoints. Forecasts and busser projections are cached until state changes or the minute changes.

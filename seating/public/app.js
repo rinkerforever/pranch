@@ -1,3 +1,4 @@
+import {areaClosed,serviceTables,cleaningQueue,delayReason,undoAvailable,undoLabels} from './service-ops.js';
 import {keyedChildren,floorImageUrl} from './render-cache.js';
 import {areaOptions,areaName,roomOptions,partyRoomAreas} from './areas.js';
 import {planImage,cleanUpPlan} from './plan-cleanup.js';
@@ -22,22 +23,22 @@ let combining=false;
 let seatNowMode=false,guestAdviceKey='';
 let recoveringAccess=false;
 let lastConnectionConfirmed=0,seatingReachable=true;
-let activeScreen=location.hash==='#waitlist'?'waitlist':'floor';
+let activeScreen=['#waitlist','#busser'].includes(location.hash)?location.hash.slice(1):'floor';
 function renderScreen(){
  $('seat-now-open').hidden=activeScreen!=='floor'||editing||!canWrite();
  $('app').dataset.screen=activeScreen;
- history.replaceState(null,'',activeScreen==='waitlist'?'#waitlist':'#floor');
- const allowed=!!state&&locations.some(l=>l.id===locationId);
- $('workspace').hidden=!allowed||activeScreen!=='floor';$('waitlist-screen').hidden=!allowed||activeScreen!=='waitlist';
+ history.replaceState(null,'','#'+activeScreen);
+ const allowed=!!state&&locations.some(l=>l.id===locationId);$('sections-open').hidden=!allowed;$('undo-action').hidden=!allowed||!canWrite()||!undoAvailable(state);
+ $('workspace').hidden=!allowed||activeScreen!=='floor';$('waitlist-screen').hidden=!allowed||activeScreen!=='waitlist';$('busser-screen').hidden=!allowed||activeScreen!=='busser';$('busser-open').classList.toggle('active',activeScreen==='busser');$('busser-open').setAttribute('aria-current',activeScreen==='busser'?'page':'false');
  $('live-tab').classList.toggle('active',activeScreen==='floor');$('waitlist-open').classList.toggle('active',activeScreen==='waitlist');
  $('live-tab').setAttribute('aria-current',activeScreen==='floor'?'page':'false');$('waitlist-open').setAttribute('aria-current',activeScreen==='waitlist'?'page':'false');
- $('page-title').textContent=activeScreen==='waitlist'?'Waiting list':editing?'Layout editor':'Live floor';
+ $('page-title').textContent=activeScreen==='busser'?'Busser screen':activeScreen==='waitlist'?'Waiting list':editing?'Layout editor':'Live floor';
  $('edit-tab').hidden=activeScreen!=='floor'||!canEdit();$('floor-wait-open').hidden=activeScreen!=='floor'||editing;
  $('phone-floor').setAttribute('aria-pressed',activeScreen==='floor');$('phone-wait').setAttribute('aria-pressed',activeScreen==='waitlist');
 }
 function setScreen(screen){
  activeScreen=screen;closeSidebar();$('app').classList.remove('phone-menu-open');
- if(screen==='waitlist')editing=false;
+ if(screen!=='floor')editing=false;
  renderScreen();if(state){if(screen==='waitlist')renderWaitlistView();else{render();requestAnimationFrame(()=>renderFloor());}}
 }
 const forecastTime=stamp=>new Date(stamp).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
@@ -99,7 +100,7 @@ async function loadSession(){
 async function recoverLocationAccess(){
   if(recoveringAccess)return;
   recoveringAccess=true;transportReady=false;state=null;locationId=null;version=-1;selected.clear();partyId=null;tableDraft=null;editing=false;combining=false;
-  $('workspace').hidden=true;$('waitlist-screen').hidden=true;$('floor').replaceChildren();$('location').replaceChildren();
+  $('workspace').hidden=true;$('waitlist-screen').hidden=true;$('busser-screen').hidden=true;$('sections-dialog').close();$('floor').replaceChildren();$('location').replaceChildren();
   for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
   showReadyAlert();
   try{await loadSession();toast('Your restaurant access changed. Available locations have been updated.');}
@@ -159,7 +160,7 @@ function chooseTable(t){
 function tableSymbol(t){
   const cap=t.capacity||0,across=t.orientation==='tb',long=Math.max(38,Math.ceil(cap/2)*14+7);
   const w=t.kind==='booth'?44:(across?long:38),h=t.kind==='booth'?44:(across?38:long);
-  const group=svg('g',{class:`table-node ${t.status}${selected.has(t.id)?' is-selected':''}`,transform:`translate(${t.x} ${t.y})`,role:'button',tabindex:0,'aria-label':`${label(t)}, ${t.kind==='booth'?'booth, ':''}${cap?cap+' seats':'capacity unconfirmed'}, ${names[t.status]}`,'data-id':t.id,'aria-pressed':selected.has(t.id)});
+  const group=svg('g',{class:`table-node ${areaClosed(state,t.area)?'section-closed ':''}${t.status}${selected.has(t.id)?' is-selected':''}`,transform:`translate(${t.x} ${t.y})`,role:'button',tabindex:0,'aria-label':`${label(t)}, ${t.kind==='booth'?'booth, ':''}${cap?cap+' seats':'capacity unconfirmed'}, ${names[t.status]}`,'data-id':t.id,'aria-pressed':selected.has(t.id)});
   group.append(svg('title',{},`${label(t)} · ${cap?cap+' seats':'Confirm booth capacity'} · ${names[t.status]}`));
   if(t.kind==='booth'){
     for(const sign of [-1,1])group.append(svg('rect',across?{x:-w/2,y:sign<0?-h/2-9:h/2+3,width:w,height:6,rx:2,class:'chair'}:{x:sign<0?-w/2-9:w/2+3,y:-h/2,width:6,height:h,rx:2,class:'chair'}));
@@ -228,9 +229,9 @@ function renderFloor(){
   }
   const groups=[...new Set(state.tables.map(t=>t.group).filter(Boolean))].map(id=>({id,tables:state.tables.filter(t=>t.group===id)}));
   keyedChildren($('floor-groups'),groups,g=>g.id,g=>JSON.stringify(g.tables.map(t=>[t.id,t.x,t.y])),g=>{const node=svg('g');for(let i=1;i<g.tables.length;i++){const a=g.tables[i-1],b=g.tables[i];node.append(svg('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:'group-line'}));}return node;});
-  keyedChildren($('floor-tables'),state.tables,t=>t.id,t=>JSON.stringify([locationId,t,selected.has(t.id),editing,combining,canWrite()]),tableSymbol);
-  for(const s of Object.keys(names))$('count-'+s).textContent=state.tables.filter(t=>t.status===s).length;
-  const seats=openSeats(state.tables);$('count-seats').textContent=seats.count;$('phone-seat-count').textContent=seats.count;$('phone-seat-note').textContent=seats.unconfirmed?'Confirmed capacity only':'Restaurant total';
+  keyedChildren($('floor-tables'),state.tables,t=>t.id,t=>JSON.stringify([locationId,t,areaClosed(state,t.area),selected.has(t.id),editing,combining,canWrite()]),tableSymbol);
+  for(const s of Object.keys(names))$('count-'+s).textContent=state.tables.filter(t=>t.status===s&&(s!=='open'||serviceTables(state).includes(t))).length;
+  const seats=openSeats(serviceTables(state));$('count-seats').textContent=seats.count;$('phone-seat-count').textContent=seats.count;$('phone-seat-note').textContent=seats.unconfirmed?'Confirmed capacity only':'Restaurant total';
   $('seat-count-note').textContent=seats.unconfirmed?`${seats.unconfirmed} open booths/tables need a capacity; excluded from seat count.`:'';
   $('combine-select').hidden=editing||!canWrite();$('combine-cancel').hidden=!combining||editing;
   $('combine-select').setAttribute('aria-pressed',String(combining));
@@ -280,10 +281,12 @@ function renderWaitlistView(){
   const forecast=guestForecast(p,estimate,now),row=el('tr',{class:`${estimate?.ready?'ready-row ':''}${forecast.pastEstimate?'past-estimate-row':''}`}),guest=el('td'),wait=el('td'),eta=el('td'),table=el('td'),action=el('td');
   wait.append(el('strong',{},`${forecast.waitedMinutes} min`),el('small',{},`Arrived ${forecastTime(p.arrivedAt)}`));
   guest.append(el('strong',{},`${i+1}. ${p.name}`),el('small',{},`${p.size} guests${p.highChair?' · High chair':''}${p.booster?' · Booster':''}`));
+  if(p.attendance==='away')guest.append(el('strong',{class:'attendance-note'},`Not present · ${minutes(p.awayAt)} min`));
+  else if(p.calledAt)guest.append(el('strong',{class:'attendance-note'},`Called ${minutes(p.calledAt)} min ago`));
   if(p.accessibility)guest.append(el('small',{},'Accessibility-preferred seating'));
   if(p.notes)guest.append(el('small',{},p.notes));
   if(combinationPriority)guest.append(el('span',{class:'combination-tag'},'Combination priority'));
-  eta.append(el('strong',{},estimate?.ready?'Ready to seat now':forecast.current?forecastWindowText(forecast.current):'Host review needed'));
+  eta.append(el('strong',{},p.attendance==='away'?'Paused — guest not present':estimate?.ready?'Ready to seat now':forecast.current?forecastWindowText(forecast.current):'Host review needed'));
   if(!estimate?.ready&&forecast.current)eta.append(el('small',{},`About ${forecast.current.lower}–${forecast.current.upper} min more`));
   eta.append(el('small',{},forecast.original?`Original window: ${forecastWindowText(forecast.original)}`:'Original estimate not recorded'));
   if(forecast.original&&forecast.original.partySize!==p.size)eta.append(el('small',{},`Original estimate was for ${forecast.original.partySize} guests`));
@@ -291,23 +294,31 @@ function renderWaitlistView(){
   table.append(el('span',{},estimate?estimate.tables.map(label).join(' + '):'No configured fit'));
   if(estimate?.accessiblePreferred)table.append(el('small',{},'Accessibility-preferred area'));
   if(estimate&&includesBoothCombination(estimate.tables))table.append(el('small',{},'Includes booth · confirm fit'));
-  if(estimate&&!estimate.ready){const occupied=estimate.tables.filter(t=>t.status==='in_use'),cleaning=estimate.tables.filter(t=>t.status==='cleaning');table.append(el('small',{},occupied.length?(occupied.some(t=>t.seatedAt)?`Guests still dining · longest seated ${Math.max(...occupied.filter(t=>t.seatedAt).map(t=>minutes(t.seatedAt)))} min · then cleaning`:'Guests still dining · seated time not recorded'):cleaning.length?'Cleaning must be completed':'Waiting behind planned parties / room bookings'));}
+  table.append(el('small',{},delayReason(p,estimate)));
   const button=el('button',{class:estimate?.ready?'primary small':'small'},estimate?.ready?'Review & seat':'View options');button.onclick=()=>chooseWaitingParty(p,estimate?.ready?estimate.tables:[]);action.append(button);
+  if(canWrite()){
+   for(const [contact,title] of p.attendance==='away'?[['waiting','Return to waiting']]:[['called',p.calledAt?'Call again':'Called'],['away','Not here']]){
+    const contactButton=el('button',{class:'small'},title);contactButton.onclick=async()=>{if(contact==='away'&&!await confirmChange('Guest not present?',`Pause table planning for ${p.name}? Their original arrival time and quote stay saved. Return them to waiting when they arrive.`))return;await act({type:'partyContact',id:p.id,contact});};action.append(contactButton);
+   }
+  }
   if(canWrite()){const edit=el('button',{class:'quiet small'},'Review / edit guest');edit.onclick=()=>openGuest(p);action.append(edit);const remove=el('button',{class:'quiet small danger'},'Remove');remove.onclick=async()=>{if(await confirmChange('Remove waiting party?',`Remove ${p.name} from the waiting list?`))await act({type:'cancelParty',id:p.id});};action.append(remove);}
+  const controls=el('div',{class:'wait-row-actions'});controls.append(...action.childNodes);action.append(controls);
   row.append(guest,wait,eta,table,action);return row;
  });renderQuote();
 }
 function renderWait(){
-  const plan=currentPlan();renderWaitlistView();if($('guest-dialog').open)renderGuestQuote();
+  const plan=currentPlan();renderServiceTools();renderWaitlistView();if($('guest-dialog').open)renderGuestQuote();
   const waiting=state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt);$('rail-wait-count').textContent=waiting.length;$('wait-count').textContent=waiting.length;$('tablet-wait-count').textContent=waiting.length;$('phone-wait-count').textContent=waiting.length;$('add-guest').disabled=!canWrite();
 }
 
 let selectionRenderKey=null;
 function renderSelection(){
-  const key=JSON.stringify([locationId,role,transportReady,partyId,current(),state.parties.filter(p=>p.status==='waiting'),combining,editing]);
+  const key=JSON.stringify([locationId,role,transportReady,state.closedAreas,partyId,current(),state.parties.filter(p=>p.status==='waiting'),combining,editing]);
   if(key===selectionRenderKey)return;selectionRenderKey=key;
   const box=$('selection-body'),tables=current(),party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');const overrideKey=JSON.stringify([party?.id,party?.size,tables.map(t=>[t.id,t.capacity,t.status])]),keepOverride=box.dataset.overrideKey===overrideKey&&!!box.querySelector('#child-override')?.checked;box.dataset.overrideKey=overrideKey;box.replaceChildren();$('selection-title').textContent=party?`Seat ${party.name}`:'Table details';
   if(!canWrite())box.append(el('p',{class:'read-only-note'},'View-only access. Ask an administrator for host access to make changes.'));
+  if(tables.some(t=>areaClosed(state,t.area)))box.append(el('p',{class:'read-only-note'},'Section closed to new seating. Reopen it in Sections.'));
+  if(party?.attendance==='away')box.append(el('p',{class:'read-only-note'},'Guest not present. Return them to waiting from the waitlist before seating.'));
   if(party)box.append(el('p',{class:'muted'},`${party.size} guests · Choose a table below or tap tables on the floor.`));
   if(party?.accessibility)box.append(el('p',{class:'equipment-badges'},'Accessible seating preferred · confirm fit and route with the guest.'));
   if(!party&&canWrite()&&tables.length&&tables.every(t=>t.status==='open')){
@@ -329,7 +340,7 @@ function renderSelection(){
       box.append(toggle,el('p',{class:'muted'},'Host must confirm the party fits. The normal booth capacity stays unchanged.'));
       override.onchange=()=>{button.disabled=!override.checked||tables.some(t=>t.status!=='open');};
     }
-    button.disabled=unknown||(capacity<party.size&&!override?.checked)||tables.some(t=>t.status!=='open');
+    button.disabled=unknown||party.attendance==='away'||(capacity<party.size&&!override?.checked)||tables.some(t=>t.status!=='open'||areaClosed(state,t.area));
     button.onclick=async()=>{
       const childOverride=!!override?.checked,boothAcknowledged=includesBoothCombination(tables);
       if((childOverride||boothAcknowledged)&&!await confirmChange(childOverride?'Confirm child seating override':'Confirm booth combination',childOverride?`Seat ${party.size} guests at this ${capacity}-seat booth, including a small child? Confirm the party fits before seating.`:boothNotice))return;
@@ -397,6 +408,45 @@ function render(){
   renderAreas();renderFloor();renderWait();renderSelection();renderRecommendations();renderRoomBookings();showReadyAlert();
   // Keep unsaved layout fields intact while live state polls update the floor.
 }
+
+let busserCache=null,busserState=null,busserMinute=-1;
+function renderServiceTools(){
+ const now=Date.now(),undo=state.lastUndo;
+ $('undo-action').hidden=!canWrite()||!undoAvailable(state,now);
+ $('undo-action').textContent=undo?'Undo '+(undoLabels[undo.type]||'last action'):'Undo last action';
+ if(activeScreen==='busser'){
+  if(busserState!==state||busserMinute!==Math.floor(now/60000)){busserCache=cleaningQueue(state,currentPlan(),now,planWaitlist);busserState=state;busserMinute=Math.floor(now/60000);}const rows=busserCache;$('busser-empty').hidden=rows.length>0;
+  keyedChildren($('busser-cards'),rows,r=>r.key,r=>JSON.stringify([locationId,r,canWrite()]),r=>{
+   const card=el('article',{class:'service-card'+(r.guests.length?' ready-cleaning':'')});
+   card.append(el('h2',{},r.tables.map(label).join(' + ')),el('strong',{},r.tables.some(t=>t.cleaningAt)?`${r.minutes} min awaiting cleaning`:'Cleaning time not recorded'));
+   if(r.guests.length)card.append(el('p',{},'Can help seat: '+r.guests.map(p=>`${p.name} (${p.size})`).join(', ')));
+   if(r.tables.some(t=>areaClosed(state,t.area)))card.append(el('p',{},'Section closed — cleaning will not reopen it.'));
+   const button=el('button',{class:'primary'},'Ready');button.disabled=!canWrite()||!r.canReady;
+   button.onclick=()=>act({type:'status',ids:r.tables.map(t=>t.id),status:'open'});card.append(button);
+   if(!r.canReady)card.append(el('p',{},'Manage this group from the floor or Room bookings.'));
+   return card;
+  });
+ }
+ if($('sections-dialog').open){
+  keyedChildren($('section-cards'),areaOptions(state),a=>a.id,a=>JSON.stringify([locationId,a,state.closedAreas?.[a.id],state.tables.filter(t=>t.area===a.id),canWrite()]),a=>{
+   const closed=areaClosed(state,a.id),tables=state.tables.filter(t=>t.area===a.id),card=el('article',{class:'service-card'});
+   card.append(el('h3',{},a.name),el('strong',{},closed?'Closed to new seating':'Open for service'),el('p',{},`${tables.length} tables · ${tables.filter(t=>t.status==='in_use').length} in use`));
+   if(closed)card.append(el('p',{},state.closedAreas[a.id].reason));
+   const button=el('button',{},closed?'Reopen section':'Close section');button.disabled=!canWrite();
+   button.onclick=async()=>{if(!await confirmChange(closed?'Reopen section?':'Close section?',closed?`Make ${a.name} available for new seating?`:`Stop new seating in ${a.name}? Current guests and bookings remain; reopen the section when ready.`))return;await act({type:'areaAvailability',area:a.id,closed:!closed});};
+   card.append(button);return card;
+  });
+ }
+}
+$('busser-open').onclick=()=>setScreen('busser');
+$('busser-settings-open').onclick=()=>{$('app-settings-dialog').close();setScreen('busser');};
+function openSections(){$('app-settings-dialog').close();$('sections-dialog').showModal();renderServiceTools();}
+$('sections-open').onclick=openSections;$('sections-settings-open').onclick=openSections;
+$('undo-action').onclick=async()=>{
+ const undo=state.lastUndo;if(!undo||!undoAvailable(state))return;
+ if(await confirmChange('Undo last action?',`Undo ${undoLabels[undo.type]} for this restaurant? This restores the affected tables and guests. Only the most recent eligible action within five minutes can be undone.`))await act({type:'undo',undoId:undo.id});
+};
+
 function openGuest(p=null,immediate=false){
  seatNowMode=immediate&&!p;guestAdviceKey='';editGuest=p?.id||null;
  $('guest-title').textContent=p?'Edit waiting party':seatNowMode?'Seat guests now':'Add guests';

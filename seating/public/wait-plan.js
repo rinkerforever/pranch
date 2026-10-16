@@ -2,6 +2,7 @@ import {scheduledRooms,overlaps} from './rooms.js';
 import {partyRoomAreas} from './areas.js';
 import {combinationCandidates,usesPartyRoom} from './suggestions.js';
 import {preferredAreas,preferredSeating} from './accessibility.js';
+import {serviceTables} from './service-ops.js';
 const capacity=ts=>ts.reduce((n,t)=>n+t.capacity,0);
 export function waitSettings(state){
  const visits=state.parties.filter(p=>p.status==='completed'&&p.seatedAt&&p.closedAt>p.seatedAt).map(p=>({minutes:(p.closedAt-p.seatedAt)/60000,closedAt:p.closedAt}));
@@ -57,21 +58,22 @@ export function waitRange(estimate){
  return `${lower}–${upper} min`;
 }
 export function planWaitlist(state,now=Date.now()){
- const settings=waitSettings(state),available=new Map(),context={now,duration:settings.diningMinutes+settings.cleaningMinutes,bookings:scheduledRooms(state),preferredAreas:preferredAreas(state),partyRoomAreas:partyRoomAreas(state)};
+ const settings=waitSettings(state),available=new Map(),eligible=new Set(serviceTables(state).map(t=>t.id)),context={now,duration:settings.diningMinutes+settings.cleaningMinutes,bookings:scheduledRooms(state),preferredAreas:preferredAreas(state),partyRoomAreas:partyRoomAreas(state)};
  for(const t of state.tables){
   const elapsed=t.seatedAt?Math.max(0,(now-t.seatedAt)/60000):0;
   const cleaningElapsed=t.cleaningAt?Math.max(0,(now-t.cleaningAt)/60000):0;
   const minutes=t.status==='open'?0:t.status==='cleaning'?Math.max(1,settings.cleaningMinutes-cleaningElapsed):t.status==='in_use'?Math.max(10,settings.diningMinutes-elapsed)+settings.cleaningMinutes:Infinity;
-  available.set(t.id,minutes);
+  available.set(t.id,eligible.has(t.id)?minutes:Infinity);
  }
- const candidates=combinationCandidates(state.tables.filter(t=>!t.roomBlock).map(t=>({...t,status:'open'})));
- const largestSingle=Math.max(0,...state.tables.map(t=>t.capacity||0));
+ const candidates=combinationCandidates(serviceTables(state).filter(t=>!t.roomBlock).map(t=>({...t,status:'open',actualStatus:t.status}))).map(ts=>ts.map(({actualStatus,...t})=>({...t,status:actualStatus})));
+ const largestSingle=Math.max(0,...serviceTables(state).map(t=>t.capacity||0));
  const waiting=state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt);
  // Parties requiring combinations get planned before individual tables are offered away.
  // Arrival order is retained within each category; the displayed list keeps arrival order.
  const order=[...waiting].sort((a,b)=>Number(b.size>largestSingle)-Number(a.size>largestSingle)||a.arrivedAt-b.arrivedAt);
  const results=new Map();
  for(const party of order){
+  if(party.attendance==='away'){results.set(party.id,{party,estimate:null,combinationPriority:false});continue;}
   const estimate=choose(candidates,available,party.size,context,party.accessibility===true);
   results.set(party.id,{party,estimate,combinationPriority:party.size>largestSingle});
   if(estimate)for(const t of estimate.tables)available.set(t.id,estimate.minutes+settings.diningMinutes+settings.cleaningMinutes);

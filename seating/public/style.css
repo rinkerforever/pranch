@@ -183,3 +183,14 @@
 }
 
 .pin-keypad{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:4px 0 16px}.pin-keypad[hidden]{display:none}.pin-keypad button{min-height:56px;font-size:24px;touch-action:manipulation}.pin-keypad button[aria-label="Clear"],.pin-keypad button[aria-label="Delete last digit"]{font-size:17px}#local-pin{text-align:center;font-size:30px;letter-spacing:14px;caret-color:transparent}
+
+.service-screen{flex:1;min-height:0;overflow:auto;padding:0 2px 16px}.service-screen[hidden]{display:none}
+.service-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.service-card{border:1px solid var(--line);background:white;border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:12px}
+.service-card h2,.service-card h3,.service-card p{margin:0}.service-card button{min-height:48px}.service-card p{font-size:13px;line-height:1.5}
+.service-card.ready-cleaning{border:2px solid #5b9b69;background:#edf7ed}.table-node.section-closed{opacity:.45}.table-node.section-closed .table-surface{stroke-dasharray:3 2}
+.attendance-note{display:block;margin-top:8px;color:#8a5419}.page-actions{flex-wrap:wrap}#sections-dialog{max-width:850px;width:95vw}
+#app[data-screen=busser] .phone-seat-total{display:none}
+@media(max-width:599px){.service-cards{grid-template-columns:1fr}.page-actions button{font-size:12px;padding:8px}.page-heading{gap:8px;flex-wrap:wrap}}
+
+.wait-row-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}#waitlist-screen .wait-row-actions button{width:auto;margin:0;min-height:44px;padding:6px;font-size:11px}#waitlist-screen .wait-row-actions button:first-child{grid-column:1/-1}
