@@ -5,6 +5,7 @@ import { initialTables } from '../public/floor.js';
 import {waitSettings,planWaitlist} from '../public/wait-plan.js';
 import {quoteForParty} from '../public/wait-forecast.js';
 import {areaClosed,recordUndo,undoAvailable,restoreUndo} from '../public/service-ops.js';
+import {recordReport} from '../public/reports.js';
 export class AppError extends Error { constructor(message, status=400) { super(message); this.status=status; } }
 const fail = message => { throw new AppError(message); };
 const integer = (v,min,max) => Number.isInteger(v) && v>=min && v<=max;
@@ -40,18 +41,22 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
  if(action.type==='undo'){
   if(!['admin','manager','host'].includes(role))throw new AppError('You have view-only access.',403);
   if(action.undoId!==original.lastUndo?.id||!undoAvailable(original,now))fail('This action can no longer be undone. Another change was made or the five-minute undo window expired.');
-  const state=structuredClone(original);restoreUndo(state);state.history.unshift({type:'undo',at:now});state.history=state.history.slice(0,100);return state;
+  const state=structuredClone(original);restoreUndo(state);state.history.unshift({type:'undo',at:now});state.history=state.history.slice(0,100);recordReport(original,state,action,now);return state;
  }
  const state=applyActionCore(original,action,role,now,uuid);
  state.lastUndo=recordUndo(original,state,action.type,now,uuid());
+ const delta=recordReport(original,state,action,now);if(state.lastUndo&&delta)state.lastUndo.reportDelta=delta;
  return state;
 }
 function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto.randomUUID()) {
   const state=structuredClone(original);
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
-  if(['cleanPlan','saveArea','deleteArea','addRoomCombination','deleteRoomCombination','layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
-  if(type==='areaAvailability'){
+  if(['reportHours','cleanPlan','saveArea','deleteArea','addRoomCombination','deleteRoomCombination','layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
+  if(type==='reportHours'){
+    if(!integer(action.from,0,23)||!integer(action.to,1,24)||action.from>=action.to)fail('Choose opening and closing hours from 0 to 24, with closing after opening.');
+    state.reportHours={from:action.from,to:action.to};
+  }else if(type==='areaAvailability'){
     if(!areaOptions(state).some(a=>a.id===action.area)||typeof action.closed!=='boolean')fail('Choose a valid section.');
     state.closedAreas={...(state.closedAreas||{})};
     if(action.closed)state.closedAreas[action.area]={at:now,reason:clean(action.reason,100)||'Temporarily closed'};else delete state.closedAreas[action.area];
@@ -125,7 +130,7 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     const booking=scheduledRooms(state).find(b=>b.id===action.id);if(!booking)fail('Booking not found.');
     if(now<booking.startsAt-30*60000||now>=booking.endsAt)fail('Start this booking within 30 minutes of arrival and before its end time.');
     booking.status='activated';
-    const result=applyAction(state,{type:'bookRoom',roomId:booking.roomId,name:booking.name,size:booking.size,notes:booking.notes,highChair:booking.highChair,booster:booking.booster,endsAt:booking.endsAt},role,now,uuid);
+    const result=applyActionCore(state,{type:'bookRoom',roomId:booking.roomId,name:booking.name,size:booking.size,notes:booking.notes,highChair:booking.highChair,booster:booking.booster,endsAt:booking.endsAt},role,now,uuid);
     result.roomBlocks.at(-1).scheduleId=booking.id;return result;
   } else if(type==='bookRoom') {
     const room=roomInfo(state,action.roomId);if(!room||!room.available||room.blocks.length)fail('This room is not fully open. Clear its current tables or release its room booking first.');
@@ -196,7 +201,7 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     if(tables.some(t=>(plan.available.get(t.id)??Infinity)>0))fail('These tables are occupied, held, or planned for waiting guests. Choose another recommendation.');
     const party={id:uuid(),name:clean(action.name,80)||'Walk-in',size,notes:clean(action.notes,300),...equipment(action),arrivedAt:now,status:'waiting',source:'seat-now'};
     state.parties.push(party);
-    const seated=applyAction(state,{type:'seat',partyId:party.id,ids:action.ids,boothAcknowledged:action.boothAcknowledged,childOverride:action.childOverride},role,now,uuid);
+    const seated=applyActionCore(state,{type:'seat',partyId:party.id,ids:action.ids,boothAcknowledged:action.boothAcknowledged,childOverride:action.childOverride},role,now,uuid);
     seated.history[0].type='seatNow';return seated;
   } else if(type==='seat') {
     const party=state.parties.find(p=>p.id===action.partyId && p.status==='waiting');

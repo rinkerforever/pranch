@@ -1,3 +1,4 @@
+import {reportView,reportClock} from './reports.js';
 import {areaClosed,serviceTables,cleaningQueue,delayReason,undoAvailable,undoLabels} from './service-ops.js';
 import {keyedChildren,floorImageUrl} from './render-cache.js';
 import {areaOptions,areaName,roomOptions,partyRoomAreas} from './areas.js';
@@ -23,16 +24,16 @@ let combining=false;
 let seatNowMode=false,guestAdviceKey='';
 let recoveringAccess=false;
 let lastConnectionConfirmed=0,seatingReachable=true;
-let activeScreen=['#waitlist','#busser'].includes(location.hash)?location.hash.slice(1):'floor';
+let activeScreen=['#waitlist','#busser','#reports'].includes(location.hash)?location.hash.slice(1):'floor';
 function renderScreen(){
  $('seat-now-open').hidden=activeScreen!=='floor'||editing||!canWrite();
  $('app').dataset.screen=activeScreen;
  history.replaceState(null,'','#'+activeScreen);
  const allowed=!!state&&locations.some(l=>l.id===locationId);$('sections-open').hidden=!allowed;$('undo-action').hidden=!allowed||!canWrite()||!undoAvailable(state);
- $('workspace').hidden=!allowed||activeScreen!=='floor';$('waitlist-screen').hidden=!allowed||activeScreen!=='waitlist';$('busser-screen').hidden=!allowed||activeScreen!=='busser';$('busser-open').classList.toggle('active',activeScreen==='busser');$('busser-open').setAttribute('aria-current',activeScreen==='busser'?'page':'false');
+ $('workspace').hidden=!allowed||activeScreen!=='floor';$('waitlist-screen').hidden=!allowed||activeScreen!=='waitlist';$('busser-screen').hidden=!allowed||activeScreen!=='busser';$('reports-screen').hidden=!allowed||activeScreen!=='reports';$('reports-open').classList.toggle('active',activeScreen==='reports');$('reports-open').setAttribute('aria-current',activeScreen==='reports'?'page':'false');$('busser-open').classList.toggle('active',activeScreen==='busser');$('busser-open').setAttribute('aria-current',activeScreen==='busser'?'page':'false');
  $('live-tab').classList.toggle('active',activeScreen==='floor');$('waitlist-open').classList.toggle('active',activeScreen==='waitlist');
  $('live-tab').setAttribute('aria-current',activeScreen==='floor'?'page':'false');$('waitlist-open').setAttribute('aria-current',activeScreen==='waitlist'?'page':'false');
- $('page-title').textContent=activeScreen==='busser'?'Busser screen':activeScreen==='waitlist'?'Waiting list':editing?'Layout editor':'Live floor';
+ $('page-title').textContent=activeScreen==='reports'?'Daily service report':activeScreen==='busser'?'Busser screen':activeScreen==='waitlist'?'Waiting list':editing?'Layout editor':'Live floor';
  $('edit-tab').hidden=activeScreen!=='floor'||!canEdit();$('floor-wait-open').hidden=activeScreen!=='floor'||editing;
  $('phone-floor').setAttribute('aria-pressed',activeScreen==='floor');$('phone-wait').setAttribute('aria-pressed',activeScreen==='waitlist');
 }
@@ -100,7 +101,7 @@ async function loadSession(){
 async function recoverLocationAccess(){
   if(recoveringAccess)return;
   recoveringAccess=true;transportReady=false;state=null;locationId=null;version=-1;selected.clear();partyId=null;tableDraft=null;editing=false;combining=false;
-  $('workspace').hidden=true;$('waitlist-screen').hidden=true;$('busser-screen').hidden=true;$('sections-dialog').close();$('floor').replaceChildren();$('location').replaceChildren();
+  $('workspace').hidden=true;$('waitlist-screen').hidden=true;$('busser-screen').hidden=true;$('reports-screen').hidden=true;$('sections-dialog').close();$('floor').replaceChildren();$('location').replaceChildren();
   for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
   showReadyAlert();
   try{await loadSession();toast('Your restaurant access changed. Available locations have been updated.');}
@@ -307,7 +308,7 @@ function renderWaitlistView(){
  });renderQuote();
 }
 function renderWait(){
-  const plan=currentPlan();renderServiceTools();renderWaitlistView();if($('guest-dialog').open)renderGuestQuote();
+  const plan=currentPlan();renderServiceTools();renderReport();renderWaitlistView();if($('guest-dialog').open)renderGuestQuote();
   const waiting=state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt);$('rail-wait-count').textContent=waiting.length;$('wait-count').textContent=waiting.length;$('tablet-wait-count').textContent=waiting.length;$('phone-wait-count').textContent=waiting.length;$('add-guest').disabled=!canWrite();
 }
 
@@ -408,6 +409,61 @@ function render(){
   renderAreas();renderFloor();renderWait();renderSelection();renderRecommendations();renderRoomBookings();showReadyAlert();
   // Keep unsaved layout fields intact while live state polls update the floor.
 }
+
+
+let reportLocation=null,reportKey='',lastReport=null;
+const reportNumber=value=>Number.isFinite(value)?value.toLocaleString(undefined,{maximumFractionDigits:1}):'—';
+const hourLabel=hour=>hour===24?'12 AM':`${hour%12||12} ${hour<12?'AM':'PM'}`;
+function renderReport(){
+ if(activeScreen!=='reports'||!state)return;
+ const now=Date.now(),zone=state.reporting?.zone||'America/Chicago',today=reportClock(now,zone).date;
+ if(reportLocation!==locationId){reportLocation=locationId;reportKey='';$('report-date').value=today;let saved;try{saved=JSON.parse(localStorage.getItem('seating-report-hours:'+locationId)||'null');}catch{}const defaults=state.reportHours||{from:10,to:21};$('report-from').value=saved?.from??defaults.from;$('report-to').value=saved?.to??defaults.to;}
+ $('report-save-hours').hidden=!canEdit();$('report-date').max=today;$('report-date').min=reportClock(now-30*86400000,zone).date;
+ const date=$('report-date').value,from=Number($('report-from').value),to=Number($('report-to').value);
+ if(!date||date<$('report-date').min||date>today||!Number.isInteger(from)||!Number.isInteger(to)||from<0||to>24||from>=to){$('report-note').textContent='Choose a date within the last 31 days and hours from 0 to 24, with the end after the start.';$('report-export').disabled=true;return;}
+ const key=JSON.stringify([locationId,version,date,from,to,Math.floor(now/60000)]);
+ if(reportKey===key)return;reportKey=key;
+ const r=reportView(state,date,from,to,now),m=r.metrics;lastReport=r;$('report-export').disabled=false;
+ const storeHours=state.reportHours||{from:10,to:21};
+ $('report-period').textContent=`${locations.find(l=>l.id===locationId)?.name||''} · ${date} · ${zone} · Viewing ${hourLabel(from)}–${hourLabel(to)} · Store hours ${hourLabel(storeHours.from)}–${hourLabel(storeHours.to)}`;
+ const tracked=Math.round(r.observedMs/60000),notes=[];
+ if(!r.startedAt)notes.push('Tracking starts with the next saved seating change. No historical occupancy is available.');
+ else if(!tracked)notes.push('No occupancy observations in the selected hours yet.');
+ else notes.push(`${tracked} minutes tracked in the selected hours. Partial hours and untracked periods are not treated as empty seats.`);
+ if(r.estimated)notes.push('Estimated occupancy includes full capacity for tables marked in use without a recorded party size.');
+ if(r.unknownCapacity)notes.push('Some tables have unknown capacity; occupancy percentages may be incomplete.');
+ $('report-note').textContent=notes.join(' ');
+ const metric=(box,title,value,note)=>{const card=el('article',{class:'report-stat'});card.append(el('small',{},title),el('strong',{},value),el('small',{},note));box.append(card);};
+ const total=$('report-totals');total.replaceChildren();
+ metric(total,'Guests seated',String(m.seatedGuests||0),`${m.seatedParties||0} recorded parties · manual in-use counts excluded`);
+ metric(total,'Average wait',m.waitCount?reportNumber(m.waitMinutes/m.waitCount)+' min':'—',`${m.waitCount||0} waitlisted parties seated · walk-ins excluded`);
+ metric(total,'Seated by quoted latest time',m.quoteCount?reportNumber(100*(m.quoteMet||0)/m.quoteCount)+'%':'—',`${m.quoteCount||0} parties with original quotes`);
+ metric(total,'Average dining time',m.diningCount?reportNumber(m.diningMinutes/m.diningCount)+' min':'—',`${m.diningCount||0} completed visits`);
+ metric(total,'Average cleaning time',m.cleaningCount?reportNumber(m.cleaningMinutes/m.cleaningCount)+' min':'—',`${m.cleaningCount||0} tables finished cleaning`);
+ metric(total,'Left / removed before seating',String(m.leftParties||0),`${m.leftGuests||0} guests · includes host removals and guest cancellations`);
+ const occupancy=$('report-occupancy');occupancy.replaceChildren();
+ metric(occupancy,'Average seat occupancy',(r.averagePercent===null?'—':reportNumber(r.averagePercent)+'%')+(r.estimated?' estimated':''),'Time-weighted across tracked minutes');
+ metric(occupancy,'Average occupied seats',reportNumber(r.averageSeats),'Uses party size; manual in-use tables use full capacity');
+ metric(occupancy,'Peak hour',r.peak&&r.peak.percent>0?`${hourLabel(r.peak.hour)}–${hourLabel(r.peak.hour+1)}`:'—',r.peak&&r.peak.percent>0?`${reportNumber(r.peak.percent)}% average occupancy · ${Math.round(r.peak.observedMs/60000)} min tracked`:'No occupied seats recorded');
+ const rows=$('report-hours');rows.replaceChildren();
+ for(const h of r.hours){
+  const row=el('tr'),time=el('th',{scope:'row'},`${hourLabel(h.hour)}–${hourLabel(h.hour+1)}`),barCell=el('td'),bar=el('div',{class:'occupancy-track'}),fill=el('span',{class:'occupancy-fill'});
+  fill.style.width=Math.min(100,h.percent||0)+'%';bar.append(fill);bar.setAttribute('aria-hidden','true');
+  barCell.append(bar,el('strong',{},h.percent===null?'No data':reportNumber(h.percent)+'%'+(h.estimatedMs?' est.':'')));
+  row.append(time,barCell,el('td',{},reportNumber(h.averageSeats)),el('td',{},h.observedMs?String(Math.round(h.observedMs/60000)):'—'));rows.append(row);
+ }
+}
+$('reports-open').onclick=()=>setScreen('reports');
+$('reports-settings-open').onclick=()=>{$('app-settings-dialog').close();setScreen('reports');};
+$('report-save-hours').onclick=async()=>{const from=Number($('report-from').value),to=Number($('report-to').value);if(!Number.isInteger(from)||!Number.isInteger(to)||from<0||to>24||from>=to){toast('Choose valid opening and closing hours.',true);return;}if(await act({type:'reportHours',from,to}))toast('Restaurant report hours saved.');};
+for(const id of ['report-date','report-from','report-to'])$(id).onchange=()=>{reportKey='';renderReport();if(!$('report-export').disabled)localStorage.setItem('seating-report-hours:'+locationId,JSON.stringify({from:Number($('report-from').value),to:Number($('report-to').value)}));};
+$('report-export').onclick=()=>{
+ if(!lastReport||$('report-export').disabled)return;
+ const r=lastReport,m=r.metrics,rows=[['Restaurant',locations.find(l=>l.id===locationId)?.name||''],['Date',r.date],['Timezone',r.zone],['Tracking began',r.startedAt?new Date(r.startedAt).toISOString():'Not started'],['Daily metric','Value'],['Guests seated',m.seatedGuests||0],['Parties seated',m.seatedParties||0],['Average wait (minutes)',m.waitCount?m.waitMinutes/m.waitCount:''],['Seated by quoted latest time (%)',m.quoteCount?100*(m.quoteMet||0)/m.quoteCount:''],['Average dining (minutes)',m.diningCount?m.diningMinutes/m.diningCount:''],['Average cleaning (minutes)',m.cleaningCount?m.cleaningMinutes/m.cleaningCount:''],['Parties left or removed',m.leftParties||0],['Guests left or removed',m.leftGuests||0],['Selected-hours average occupancy (%)',r.averagePercent??''],['Selected-hours average occupied seats',r.averageSeats??''],['Includes estimated occupancy',r.estimated?'Yes':'No'],['Unknown table capacities',r.unknownCapacity?'Yes':'No'],[],['Hour','Occupancy percent','Average occupied seats','Tracked minutes','Estimated occupancy']];
+ for(const h of r.hours)rows.push([`${hourLabel(h.hour)}-${hourLabel(h.hour+1)}`,h.percent??'',h.averageSeats??'',h.observedMs/60000,h.estimatedMs?'Yes':'No']);
+ const csv=rows.map(row=>row.map(value=>'"'+(typeof value==='string'&&/^[=+@\-\t\r]/.test(value)?"'"+value:String(value)).replaceAll('"','""')+'"').join(',')).join('\r\n'),url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),link=el('a',{href:url,download:`seating-report-${r.date}.csv`});
+ link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
 
 let busserCache=null,busserState=null,busserMinute=-1;
 function renderServiceTools(){

@@ -194,3 +194,14 @@
 @media(max-width:599px){.service-cards{grid-template-columns:1fr}.page-actions button{font-size:12px;padding:8px}.page-heading{gap:8px;flex-wrap:wrap}}
 
 .wait-row-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}#waitlist-screen .wait-row-actions button{width:auto;margin:0;min-height:44px;padding:6px;font-size:11px}#waitlist-screen .wait-row-actions button:first-child{grid-column:1/-1}
+
+#reports-screen{display:flex;flex-direction:column;gap:14px}.report-controls{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}.report-controls label{max-width:190px}
+.report-note{padding:12px;background:#fff4db;border:1px solid #e4cf9d;border-radius:8px;font-size:13px;line-height:1.5}
+.report-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}.report-stat{padding:16px;background:#fff;border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;gap:10px}
+.report-stat strong{font-size:23px}.report-stat small{font-size:12px;color:var(--muted);line-height:1.4}.report-chart-wrap{overflow:auto;flex-shrink:0;background:white;border-radius:10px;border:1px solid var(--line)}
+.report-chart{border-collapse:collapse;width:100%;font-size:13px}.report-chart caption{text-align:left;padding:14px;font-weight:700}.report-chart th,.report-chart td{text-align:left;padding:12px;border-top:1px solid var(--line)}.report-chart td:nth-child(2){width:45%}.report-chart td strong{display:block;margin-top:5px;font-size:12px}
+.occupancy-track{height:14px;border-radius:4px;background:#eef1ea;overflow:hidden}.occupancy-fill{display:block;height:100%;background:#398459}
+#app[data-screen=reports] .phone-seat-total{display:none}
+@media(max-width:599px){.report-controls label{max-width:none;flex:1 1 40%}.report-stats{grid-template-columns:1fr 1fr}.report-stat{padding:12px}.report-stat strong{font-size:19px}.report-chart{font-size:11px}.report-chart td,.report-chart th{padding:8px}.report-chart th:first-child{min-width:90px}}
+
+@media(min-width:800px){.report-stats{grid-template-columns:repeat(3,minmax(0,1fr))}}

@@ -73,3 +73,13 @@ Use two real iPads: add a guest from one and observe it on the other; race two p
 - Called records the host's call time; it does not send a message. Not here pauses table planning for that guest. Return to waiting restores planning with the original arrival time and quote. The guest must be returned before seating.
 - The waitlist retains the original quoted window, current estimate and overdue indicator, and explains occupied tables, cleaning, combinations and queue/booking delays. These are forecasts, never automatic table releases.
 - These tools use the existing versioned state and synchronization cycle, with no additional polling endpoints. Forecasts and busser projections are cached until state changes or the minute changes.
+
+## Daily service and occupancy reports
+
+Reports are available in the navigation rail and under More on phones. They show recorded guests/parties seated, average wait for waitlisted parties, percentage seated by the original quoted latest time, completed dining/cleaning averages, and parties/guests cancelled before seating. Manual in-use tables do not invent guest totals. Counts belong to the day of the corresponding seating/completion/removal event.
+
+Seat occupancy uses recorded seated party sizes (once per party, even across combined tables). Tables marked in use without a party size use their capacity as an explicitly labeled estimate. The denominator is all configured restaurant seats, including closed sections. Missing capacities are flagged. Time-weighted averages and hourly peaks use only tracked minutes; untracked/future periods are not counted as empty seats. Day boundaries use America/Chicago, including daylight-saving changes.
+
+The initial reporting window is 10 AM to 9 PM. Changing the displayed range affects occupancy charts only; service totals cover the whole selected day. Managers can Save as store hours to persist a location-specific default. CSV exports include daily summary metrics, hourly occupancy, coverage and estimation indicators.
+
+Tracking starts with the first saved action after this release. Existing occupancy history is not reconstructed. Keep tables current for meaningful reports. Aggregates are retained for 31 days, contain no guest names, and are saved with normal versioned seating actions. Reads project the current interval without writes or extra polling. Undo reverses the latest metric contribution and corrects its occupancy interval. Database backups and ordinary cloud synchronization include the aggregates.
