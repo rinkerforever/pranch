@@ -1,3 +1,4 @@
+import {diningProgress} from './dining-progress.js';
 import {reportView,reportClock} from './reports.js';
 import {areaClosed,serviceTables,cleaningQueue,delayReason,undoAvailable,undoLabels} from './service-ops.js';
 import {keyedChildren,floorImageUrl} from './render-cache.js';
@@ -8,7 +9,7 @@ import {readyTracker} from './ready-alert.js';
 import {connectionIndicator} from './connection-indicator.js';
 import {installApp,runtimeInfo,pairLocalServer,layoutSettings} from './device.js';
 import {roomInfo,activeRoomBlocks,scheduledRooms,walkInTables} from './rooms.js';
-import {planWaitlist,estimateNewParty,seatingOptions,waitRange} from './wait-plan.js';
+import {planWaitlist,estimateNewParty,seatingOptions,waitRange,waitSettings} from './wait-plan.js';
 import {guestForecast} from './wait-forecast.js';
 import {preferredAreas,preferredSeating} from './accessibility.js';
 import {presetCombinations,includesBoothCombination,childBoothFit} from './combinations.js';
@@ -155,12 +156,12 @@ function chooseTable(t){
   if(combining){
     if(group.some(o=>o.status!=='open')){toast('Choose open tables to combine.');return;}
     for(const o of group){if(remove)selected.delete(o.id);else selected.add(o.id);}
-  }else{selected=remove?new Set():new Set(group.map(o=>o.id));showSidebar('details');}
+  }else{selected=remove?new Set():new Set(group.map(o=>o.id));if(partyId)showSidebar('details');else{closeSidebar();if(!remove&&view==='All'){view=t.area;viewFitted=true;viewBox=importedViewBox(view);renderAreas();}}}
   renderFloor();renderSelection();
 }
 function tableSymbol(t){
   const cap=t.capacity||0,across=t.orientation==='tb',long=Math.max(38,Math.ceil(cap/2)*14+7);
-  const w=t.kind==='booth'?44:(across?long:38),h=t.kind==='booth'?44:(across?38:long);
+  const w=t.kind==='booth'?44:(across?(cap<=6?44:long):44),h=t.kind==='booth'?44:(across?38:long);
   const group=svg('g',{class:`table-node ${areaClosed(state,t.area)?'section-closed ':''}${t.status}${selected.has(t.id)?' is-selected':''}`,transform:`translate(${t.x} ${t.y})`,role:'button',tabindex:0,'aria-label':`${label(t)}, ${t.kind==='booth'?'booth, ':''}${cap?cap+' seats':'capacity unconfirmed'}, ${names[t.status]}`,'data-id':t.id,'aria-pressed':selected.has(t.id)});
   group.append(svg('title',{},`${label(t)} · ${cap?cap+' seats':'Confirm booth capacity'} · ${names[t.status]}`));
   if(t.kind==='booth'){
@@ -171,6 +172,12 @@ function tableSymbol(t){
   }
   group.append(svg('rect',{x:-w/2,y:-h/2,width:w,height:h,rx:5,class:'table-surface'}));
   group.append(svg('text',{x:0,y:0,class:'number'},t.number),svg('text',{x:0,y:12,class:'seat-label'},cap?`${cap} seats`:'Seats · ?'));
+  if(!editing){const timing=diningProgress(t,waitSettings(state).diningMinutes);if(timing){
+   for(const progress of [false,true])group.append(svg('rect',{x:-w/2-2,y:-h/2-2,width:w+4,height:h+4,rx:7,fill:'none',class:`dining-ring ${progress?(timing.overdue?'overdue':'elapsed'):'track'}`,pathLength:100,...(progress?{'stroke-dasharray':`${timing.percent} 100`}:{})}));
+   group.querySelector('.seat-label').textContent=timing.short;
+   group.querySelector('title').textContent+=` · ${timing.description}`;
+   group.setAttribute('aria-label',group.getAttribute('aria-label')+`, ${timing.description}`);
+  }}
   group.append(svg('rect',{x:-w/2-15,y:-h/2-15,width:w+30,height:h+30,rx:7,class:'focus-ring','pointer-events':'all'}));
   if(t.group)group.append(svg('circle',{cx:w/2-2,cy:-h/2+1,r:3,fill:'#3476ba'}));
   group.addEventListener('click',()=>{if(!group.dataset.dragged)chooseTable(t);});
@@ -230,7 +237,7 @@ function renderFloor(){
   }
   const groups=[...new Set(state.tables.map(t=>t.group).filter(Boolean))].map(id=>({id,tables:state.tables.filter(t=>t.group===id)}));
   keyedChildren($('floor-groups'),groups,g=>g.id,g=>JSON.stringify(g.tables.map(t=>[t.id,t.x,t.y])),g=>{const node=svg('g');for(let i=1;i<g.tables.length;i++){const a=g.tables[i-1],b=g.tables[i];node.append(svg('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:'group-line'}));}return node;});
-  keyedChildren($('floor-tables'),state.tables,t=>t.id,t=>JSON.stringify([locationId,t,areaClosed(state,t.area),selected.has(t.id),editing,combining,canWrite()]),tableSymbol);
+  keyedChildren($('floor-tables'),state.tables,t=>t.id,t=>JSON.stringify([locationId,t,areaClosed(state,t.area),selected.has(t.id),editing,combining,canWrite(),t.status==='in_use'?[Math.floor(Date.now()/60000),waitSettings(state).diningMinutes]:null]),tableSymbol);
   for(const s of Object.keys(names))$('count-'+s).textContent=state.tables.filter(t=>t.status===s&&(s!=='open'||serviceTables(state).includes(t))).length;
   const seats=openSeats(serviceTables(state));$('count-seats').textContent=seats.count;$('phone-seat-count').textContent=seats.count;$('phone-seat-note').textContent=seats.unconfirmed?'Confirmed capacity only':'Restaurant total';
   $('seat-count-note').textContent=seats.unconfirmed?`${seats.unconfirmed} open booths/tables need a capacity; excluded from seat count.`:'';
@@ -240,6 +247,38 @@ function renderFloor(){
   $('combine-select').disabled=combining&&selected.size<2;
   $('selection-hint').textContent=combining?'Tap open tables, then Review to combine.':selected.size?`${selected.size} table${selected.size===1?'':'s'} selected`:'Tap a table to select it';
   $('plan-note').textContent=state.background?`Uploaded plan: ${state.background.name}. Review seats and table positions in Layout editor.`:'Chair counts follow your PDF. Booth capacities remain unconfirmed until set in Layout editor.';
+  renderFocusDock();
+}
+let overviewKey='',focusDockKey='';
+function renderFocusDock(){
+ const dock=$('focus-dock');dock.hidden=editing;if(editing)return;
+ const map=$('floor-overview'),key=JSON.stringify([locationId,floorSceneKey,state.tables.map(t=>[t.id,t.x,t.y,t.area,t.status]),areaOptions(state),backgroundFit?.bounds]);
+ if(key!==overviewKey){
+  overviewKey=key;map.replaceChildren();map.setAttribute('viewBox',fullPlanBox(backgroundFit?.bounds,state.tables).join(' '));
+  const background=$('floor-static').cloneNode(true);background.removeAttribute('id');background.querySelectorAll('[id]').forEach(n=>n.removeAttribute('id'));background.setAttribute('pointer-events','none');map.append(background);
+  for(const t of state.tables)map.append(svg('rect',{x:t.x-16,y:t.y-16,width:32,height:32,rx:3,fill:({open:'#b8dcbc',in_use:'#dc9c96',cleaning:'#e8c56d',reserved:'#c5a6d7'})[t.status]||'#ddd','pointer-events':'none'}));
+  for(const area of areaOptions(state)){
+   const ts=state.tables.filter(t=>t.area===area.id);if(!ts.length)continue;
+   const [x,y,width,height]=importedViewBox(area.id),target=svg('rect',{x,y,width,height,fill:'transparent',role:'button',tabindex:0,'aria-label':`Show ${area.name}`,'data-area':area.id,class:'overview-area'});
+   target.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setView(area.id);}});map.append(target);
+  }
+  map.onclick=e=>{const p=map.createSVGPoint();p.x=e.clientX;p.y=e.clientY;const matrix=map.getScreenCTM();if(!matrix)return;const point=p.matrixTransform(matrix.inverse());const nearest=state.tables.reduce((best,t)=>!best||Math.hypot(t.x-point.x,t.y-point.y)<Math.hypot(best.x-point.x,best.y-point.y)?t:best,null);if(nearest)setView(nearest.area);};
+  map.append(svg('rect',{id:'overview-view',fill:'#2878ba18',stroke:'#175fa8','stroke-width':8,'pointer-events':'none'}));
+ }
+ const marker=$('overview-view');if(marker)for(const [i,k]of ['x','y','width','height'].entries())marker.setAttribute(k,viewBox[i]);
+ $('overview-caption').textContent=view==='All'?'Full plan · Tap an area':`${areaName(state,view)} · Tap another area`;
+ const dockKey=JSON.stringify([locationId,view,current(),canWrite(),partyId,Math.floor(Date.now()/60000),waitSettings(state)]);if(dockKey===focusDockKey)return;focusDockKey=dockKey;
+ const tables=current(),summary=$('focus-summary'),actions=$('focus-actions');summary.replaceChildren();actions.replaceChildren();
+ summary.append(el('span',{class:'eyebrow'},tables.length?'SELECTED TABLE':'AREA VIEW'),el('strong',{},tables.length?tables.map(label).join(' + '):view==='All'?'Choose an area':areaName(state,view)));
+ if(tables.length){summary.append(el('span',{},`${tables.reduce((n,t)=>n+(t.capacity||0),0)} seats · ${[...new Set(tables.map(t=>names[t.status]))].join(' / ')}`));for(const t of tables){const timing=diningProgress(t,waitSettings(state).diningMinutes);if(timing)summary.append(el('p',{class:'focus-timing'},`${tables.length>1?label(t)+': ':''}${timing.description}`));}}
+ else summary.append(el('span',{},'Tap a table for seating and status controls.'));
+ const button=(text,fn,primary=false)=>{const b=el('button',{class:primary?'primary':''},text);b.onclick=fn;actions.append(b);return b;};
+ if(tables.length){
+  if(canWrite()&&tables.every(t=>t.status==='open'))button('Seat now',()=>openGuest(null,true),true);
+  button(tables.some(t=>t.roomBlock)?'Room booking':'Table details',()=>{renderSelection();showSidebar('details');},true);
+  if(canWrite()&&!tables.some(t=>t.roomBlock))for(const [status,text]of [['in_use','Mark in use'],['cleaning','Cleaning'],['open','Mark open']])button(text,async()=>{if(busy)return;if(tables.some(t=>t.party)&&status!=='in_use'&&!await confirmChange('Clear seated party?',`Mark ${tables.map(label).join(' + ')} ${names[status].toLowerCase()} and finish the seated party?`))return;await act({type:'status',ids:tables.map(t=>t.id),status});});
+ }else if(canWrite())button('Seat now',()=>openGuest(null,true),true);
+ actions.append(el('small',{},'Blue ring: elapsed dining time · Amber: past estimate. Estimates are not guaranteed.'));
 }
 let planCache=null,planState=null,planMinute=-1;
 function currentPlan(){const minute=Math.floor(Date.now()/60000);if(planState!==state||planMinute!==minute){planCache=planWaitlist(state);planState=state;planMinute=minute;}return planCache;}
@@ -314,7 +353,7 @@ function renderWait(){
 
 let selectionRenderKey=null;
 function renderSelection(){
-  const key=JSON.stringify([locationId,role,transportReady,state.closedAreas,partyId,current(),state.parties.filter(p=>p.status==='waiting'),combining,editing]);
+  const key=JSON.stringify([locationId,role,transportReady,state.closedAreas,partyId,current(),state.parties.filter(p=>p.status==='waiting'),combining,editing,Math.floor(Date.now()/60000)]);
   if(key===selectionRenderKey)return;selectionRenderKey=key;
   const box=$('selection-body'),tables=current(),party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');const overrideKey=JSON.stringify([party?.id,party?.size,tables.map(t=>[t.id,t.capacity,t.status])]),keepOverride=box.dataset.overrideKey===overrideKey&&!!box.querySelector('#child-override')?.checked;box.dataset.overrideKey=overrideKey;box.replaceChildren();$('selection-title').textContent=party?`Seat ${party.name}`:'Table details';
   if(!canWrite())box.append(el('p',{class:'read-only-note'},'View-only access. Ask an administrator for host access to make changes.'));
@@ -380,8 +419,8 @@ function importedViewBox(value){
  const rooms=new Set(areaOptions(state).filter(a=>a.kind==='room').map(a=>a.id));
  const tables=state.tables.filter(t=>value==='Dining'?!rooms.has(t.area):value==='Party rooms'?rooms.has(t.area):t.area===value);
  if(!tables.length)return [0,0,1660,950];
- const xs=tables.map(t=>t.x),ys=tables.map(t=>t.y),x=Math.max(0,Math.min(...xs)-65),y=Math.max(0,Math.min(...ys)-65);
- return [x,y,Math.min(1660-x,Math.max(150,Math.max(...xs)-x+65)),Math.min(950-y,Math.max(150,Math.max(...ys)-y+65))];
+ const xs=tables.map(t=>t.x),ys=tables.map(t=>t.y),x=Math.max(0,Math.min(...xs)-45),y=Math.max(0,Math.min(...ys)-45);
+ return [x,y,Math.min(1660-x,Math.max(150,Math.max(...xs)-x+45)),Math.min(950-y,Math.max(150,Math.max(...ys)-y+45))];
 }
 function focusTables(tables){view=tables.every(t=>t.area===tables[0].area)?tables[0].area:'All';viewFitted=false;viewBox=tableFocusBox(tables);renderAreas();renderFloor();}
 function setView(value){closeSidebar();view=value;viewFitted=true;const boxes={All:[0,-20,1660,950],Dining:[140,550,1495,360],A:[1300,540,340,350],B:[680,610,665,285],C:[155,610,540,285],'Party rooms':[1000,-10,640,220],'Rose City':[1010,-10,190,200],'Azalea Trail':[1190,-10,210,200],'Piney Woods':[1390,-10,250,230]};viewBox=(state?.background?.imported||state?.areaConfig)?importedViewBox(value):(boxes[value]||boxes.All);renderAreas();if(state)renderFloor();}
@@ -561,7 +600,7 @@ $('layout-form').onsubmit=async e=>{e.preventDefault();if(!tableDraft)return;e.s
 $('remove-table').onclick=async()=>{if(!tableDraft?.id)return;if(await confirmChange('Remove table?',`Remove ${label(tableDraft)} from this layout? You can add it again in Layout editor.`)&&await act({type:'removeTable',id:tableDraft.id})){tableDraft=null;selected.clear();$('layout-panel').hidden=true;renderFloor();}};
 for(const[id,factor]of [['zoom-in',.75],['zoom-out',1.333]])$(id).onclick=()=>{viewFitted=false;const[x,y,w,h]=viewBox;const nw=Math.min(2000,Math.max(120,w*factor)),nh=h*(nw/w);viewBox=[x+(w-nw)/2,y+(h-nh)/2,nw,nh];renderFloor();};$('zoom-fit').onclick=()=>setView(view);
 // Pan the canvas from an empty area, keeping table dragging exclusive to Layout editor.
-$('floor').addEventListener('pointerdown',e=>{if(e.target.closest('.table-node'))return;const floor=$('floor'),start=[e.clientX,e.clientY],box=[...viewBox],matrix=floor.getScreenCTM();floor.setPointerCapture(e.pointerId);const move=ev=>{viewFitted=false;viewBox=[box[0]-(ev.clientX-start[0])/matrix.a,box[1]-(ev.clientY-start[1])/matrix.d,box[2],box[3]];floor.setAttribute('viewBox',viewBox.join(' '));const bounds=$('floor-view-bounds');bounds.setAttribute('x',viewBox[0]);bounds.setAttribute('y',viewBox[1]);};const end=()=>{floor.removeEventListener('pointermove',move);floor.removeEventListener('pointerup',end);};floor.addEventListener('pointermove',move);floor.addEventListener('pointerup',end);});
+$('floor').addEventListener('pointerdown',e=>{if(e.target.closest('.table-node'))return;const floor=$('floor'),start=[e.clientX,e.clientY],box=[...viewBox],matrix=floor.getScreenCTM();floor.setPointerCapture(e.pointerId);const move=ev=>{viewFitted=false;viewBox=[box[0]-(ev.clientX-start[0])/matrix.a,box[1]-(ev.clientY-start[1])/matrix.d,box[2],box[3]];floor.setAttribute('viewBox',viewBox.join(' '));const bounds=$('floor-view-bounds');bounds.setAttribute('x',viewBox[0]);bounds.setAttribute('y',viewBox[1]);const marker=$('overview-view');if(marker){marker.setAttribute('x',viewBox[0]);marker.setAttribute('y',viewBox[1]);}};const end=()=>{floor.removeEventListener('pointermove',move);floor.removeEventListener('pointerup',end);};floor.addEventListener('pointermove',move);floor.addEventListener('pointerup',end);});
 $('upload').onchange=async()=>{
   const file=$('upload').files[0];if(!file||busy||uploadBusy||!canEdit())return;
   if(file.size>20*1024*1024){toast('Choose a file smaller than 20 MB.',true);$('upload').value='';return;}
@@ -602,8 +641,9 @@ $('staff-open').onclick=async()=>{
  }));$('staff-dialog').showModal();}catch(e){toast(e.message,true);}
 };
 $('demo-reset').onclick=()=>{localStorage.removeItem('seating-preview');selected.clear();partyId=null;refresh(true);};
-let nextFloorRefresh=0;
-setInterval(()=>{if(document.hidden)return;renderConnection();if(locationId&&Date.now()>=nextFloorRefresh){nextFloorRefresh=Date.now()+(runtime.mode==='local'?5000:10000);refresh();}},1000);
+let nextFloorRefresh=0,lastDiningMinute=-1;
+setInterval(()=>{if(document.hidden)return;renderConnection();const minute=Math.floor(Date.now()/60000);if(state&&!editing&&activeScreen==='floor'&&minute!==lastDiningMinute){lastDiningMinute=minute;renderFloor();renderSelection();}if(locationId&&Date.now()>=nextFloorRefresh){nextFloorRefresh=Date.now()+(runtime.mode==='local'?5000:10000);refresh();}},1000);
+$('overview-full').onclick=()=>setView('All');
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh(true);});
 window.addEventListener('online',()=>refresh(true));window.addEventListener('offline',()=>{transportReady=false;seatingReachable=false;renderConnection();showReadyAlert();sync(false,'Disconnected · changes unavailable');});
 $('connection-status').onclick=()=>{$('connection-dialog').showModal();renderConnection();};
