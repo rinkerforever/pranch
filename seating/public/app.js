@@ -35,7 +35,7 @@ function renderScreen(){
  $('live-tab').classList.toggle('active',activeScreen==='floor');$('waitlist-open').classList.toggle('active',activeScreen==='waitlist');
  $('live-tab').setAttribute('aria-current',activeScreen==='floor'?'page':'false');$('waitlist-open').setAttribute('aria-current',activeScreen==='waitlist'?'page':'false');
  $('page-title').textContent=activeScreen==='reports'?'Daily service report':activeScreen==='busser'?'Busser screen':activeScreen==='waitlist'?'Waiting list':editing?'Layout editor':'Live floor';
- $('edit-tab').hidden=activeScreen!=='floor'||!canEdit();$('floor-wait-open').hidden=activeScreen!=='floor'||editing;
+ $('edit-tab').hidden=activeScreen!=='floor'||!canEdit();
  $('phone-floor').setAttribute('aria-pressed',activeScreen==='floor');$('phone-wait').setAttribute('aria-pressed',activeScreen==='waitlist');
 }
 function setScreen(screen){
@@ -348,7 +348,7 @@ function renderWaitlistView(){
 }
 function renderWait(){
   const plan=currentPlan();renderServiceTools();renderReport();renderWaitlistView();if($('guest-dialog').open)renderGuestQuote();
-  const waiting=state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt);$('rail-wait-count').textContent=waiting.length;$('wait-count').textContent=waiting.length;$('tablet-wait-count').textContent=waiting.length;$('phone-wait-count').textContent=waiting.length;$('add-guest').disabled=!canWrite();
+  const waiting=state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt);$('rail-wait-count').textContent=waiting.length;$('wait-count').textContent=waiting.length;$('phone-wait-count').textContent=waiting.length;$('add-guest').disabled=!canWrite();
 }
 
 let selectionRenderKey=null;
@@ -682,7 +682,7 @@ $('checkin-form').onsubmit=async e=>{e.preventDefault();const button=$('checkin-
 $('preset-combinations').onclick=async()=>{if(await confirmChange('Preset nearby combinations?','Add links between neighboring tables in this sectioned floor plan. Existing links stay available. Booth combinations require a notice before use. Review links after moving tables or uploading a different plan.')){if(await act({type:'presetCombinations'})){tableDraft=null;render();toast('Nearby combinations are ready.');}}};
 
 function openWaitlist(){if(!state)return;const settings=currentPlan().settings;$('dining-minutes').value=settings.diningMinutes;$('cleaning-minutes').value=settings.cleaningMinutes;for(const id of ['dining-minutes','cleaning-minutes','wait-settings-save','wait-settings-auto'])$(id).disabled=!canWrite();setScreen('waitlist');}
-$('waitlist-open').onclick=openWaitlist;$('floor-wait-open').onclick=openWaitlist;$('waitlist-add').onclick=()=>{if(canWrite())openGuest();};
+$('waitlist-open').onclick=openWaitlist;$('waitlist-add').onclick=()=>{if(canWrite())openGuest();};
 $('estimate-size').oninput=renderQuote;$('estimate-accessibility').onchange=renderQuote;
 for(const id of ['guest-size','guest-accessibility'])$(id).addEventListener(id==='guest-size'?'input':'change',()=>{guestAdviceKey='';$('seat-now-options').replaceChildren();renderGuestQuote();});
 $('wait-settings-auto').onclick=async()=>{if(await act({type:'waitSettings',automatic:true})){const settings=currentPlan().settings;$('dining-minutes').value=settings.diningMinutes;$('cleaning-minutes').value=settings.cleaningMinutes;toast('Estimates will use the recent dining average when at least 3 visits are recorded.');}};
