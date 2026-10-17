@@ -542,12 +542,26 @@ $('undo-action').onclick=async()=>{
  if(await confirmChange('Undo last action?',`Undo ${undoLabels[undo.type]} for this restaurant? This restores the affected tables and guests. Only the most recent eligible action within five minutes can be undone.`))await act({type:'undo',undoId:undo.id});
 };
 
+function updatePartySizePicker(custom=false){
+ $('custom-party-size').hidden=!custom;
+ for(const button of $('party-size-buttons').children)button.setAttribute('aria-pressed',String(button.dataset.size==='custom'?custom:!custom&&Number(button.dataset.size)===Number($('guest-size').value)));
+}
+for(const size of [...Array.from({length:12},(_,i)=>i+1),'custom']){
+ const button=el('button',{type:'button','data-size':String(size),'aria-pressed':'false'},size==='custom'?'Custom':String(size));
+ button.onclick=()=>{
+  if(size==='custom'){updatePartySizePicker(true);button.focus();return;}
+  $('guest-size').value=size;updatePartySizePicker();button.focus();
+  $('guest-size').dispatchEvent(new Event('input',{bubbles:true}));
+ };
+ $('party-size-buttons').append(button);
+}
 function openGuest(p=null,immediate=false){
  seatNowMode=immediate&&!p;guestAdviceKey='';editGuest=p?.id||null;
  $('guest-title').textContent=p?'Edit waiting party':seatNowMode?'Seat guests now':'Add guests';
  $('guest-name').value=p?.name||'';$('guest-name').required=!seatNowMode;$('guest-name').placeholder=seatNowMode?'Walk-in (name optional)':'';
  $('guest-size').value=p?.size||2;$('guest-notes').value=p?.notes||'';$('guest-highchair').checked=!!p?.highChair;$('guest-booster').checked=!!p?.booster;$('guest-accessibility').checked=!!p?.accessibility;
- $('guest-save').textContent=seatNowMode?'Seat at selected table':'Save to waiting list';$('guest-save').disabled=false;$('seat-now-panel').hidden=!seatNowMode;$('seat-now-wait').hidden=!seatNowMode;$('seat-now-options').replaceChildren();renderGuestQuote();$('guest-dialog').showModal();$('guest-size').focus();
+ updatePartySizePicker(Number($('guest-size').value)>12);
+ $('guest-save').textContent=seatNowMode?'Seat at selected table':'Save to waiting list';$('guest-save').disabled=false;$('seat-now-panel').hidden=!seatNowMode;$('seat-now-wait').hidden=!seatNowMode;$('seat-now-options').replaceChildren();renderGuestQuote();$('guest-dialog').showModal();$('guest-title').focus();
 }
 function pinKey(key){
  if(runtime.mode!=='local'||$('login-form').querySelector('[type=submit]').disabled)return;
