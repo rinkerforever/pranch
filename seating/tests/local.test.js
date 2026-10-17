@@ -34,6 +34,25 @@ function seededLocal(t){
 }
 const localRequest=(app,path,body,cookie='',client)=>app.handle(new Request('https://waco.local:8443'+path,{method:body?'POST':'GET',headers:{origin:'https://waco.local:8443',cookie},...(body?{body:JSON.stringify(body)}:{})}),client);
 
+test('stress: offline Pi resolves 600 competing writes, serves 200 reads, and persists restart',async t=>{
+ const seed=seededLocal(t),directory=join(seed.store.db.prepare('PRAGMA database_list').get().file,'..');
+ await seed.close();cleanup.get(t).close.pop();
+ const config={locationId:'waco',token:'secret',cloudUrl:'https://cloud.example.test',publicUrl:'https://waco.local:8443',directory,noTimer:true,fetch:async()=>{throw Error('offline');}};
+ const app=createLocalServer(config);closeAfter(t,()=>app.close());
+ const login=await localRequest(app,'/api/login',{pin:'1234'});assert.equal(login.status,200);const cookie=login.headers.get('set-cookie').split(';')[0];
+ await app.cycle();assert.equal(app.runtime().online,false);
+ const initial=await(await localRequest(app,'/api/locations/waco/state',null,cookie)).json(),id=initial.state.tables[0].id;
+ for(let version=0;version<30;version++){
+  const responses=await Promise.all(Array.from({length:20},()=>localRequest(app,'/api/locations/waco/actions',{version,action:{type:'status',ids:[id],status:version%2?'open':'cleaning'}},cookie)));
+  assert.equal(responses.filter(r=>r.status===200).length,1);assert.equal(responses.filter(r=>r.status===409).length,19);
+ }
+ const reads=await Promise.all(Array.from({length:200},async()=>{const r=await localRequest(app,'/api/locations/waco/state',null,cookie);assert.equal(r.status,200);return r.json();}));
+ assert.ok(reads.every(r=>r.version===30&&r.state.tables.find(t=>t.id===id).status==='open'));
+ assert.equal((await localRequest(app,'/api/guest/waco',{action:'join'})).status,503);
+ await app.close();cleanup.get(t).close.pop();const restarted=createLocalServer(config);closeAfter(t,()=>restarted.close());
+ assert.equal(restarted.store.snapshot('waco').version,30);assert.equal(restarted.store.snapshot('waco').state.tables.find(t=>t.id===id).status,'open');
+});
+
 test('explicit local alias supports PIN and actions while rejecting foreign origins',async t=>{
  const seed=seededLocal(t);
  // Persist a paired fixture, then reopen with the additional browser origin.

@@ -116,18 +116,19 @@ function demoInitial(){let s=demoModel.initialState();
   for(const t of s.tables){if(['C-61','C-41','B-30','A-21','Piney Woods-21'].includes(t.id)){t.status='in_use';t.seatedAt=Date.now()-30*60000;}if(['C-70','A-42'].includes(t.id))t.status='cleaning';}
   s.tables.find(t=>t.id==='B-70').allowed=['B-60'];s.tables.find(t=>t.id==='B-60').allowed=['B-70'];return s;
 }
+const pendingRefreshes=new Set();
 async function refresh(force=false){
-  if(!locationId||busy||uploadBusy)return;
-  const requestedLocation=locationId;
+  if(!locationId||busy||uploadBusy||pendingRefreshes.has(locationId))return;
+  const requestedLocation=locationId;pendingRefreshes.add(requestedLocation);
   try{
     const data=demo?{state:JSON.parse(localStorage.getItem('seating-preview')||'null')||demoInitial(),version:version+1,role:'admin'}:await api(endpoint('state'));
-    if(requestedLocation!==locationId||data.version<version)return;
+    if(requestedLocation!==locationId||busy||data.version<version)return;
     if(force)viewFitted=true;
     connection=data.connection;transportReady=!connection?.requiresRecovery&&!(runtime.mode!=='local'&&connection?.mode==='local'&&!connection.online);
     if(force||data.version!==version||role!==data.role){state=presetCombinations(upgradeNumbering(data.state));version=data.version;role=data.role;if(force&&(state.background?.imported||state.areaConfig))viewBox=importedViewBox(view);selected=new Set([...selected].filter(id=>state.tables.some(t=>t.id===id)));if(!state.parties.some(p=>p.id===partyId&&p.status==='waiting'))partyId=null;render();}
     else if(!editing){renderWait();renderSelection();renderRoomBookings();}
     lastConnectionConfirmed=Date.now();seatingReachable=true;connectionStatus(data.connection);showReadyAlert();if($('guest-dialog').open)renderGuestQuote();
-  }catch(e){if(requestedLocation!==locationId)return;transportReady=false;seatingReachable=false;renderConnection();showReadyAlert();sync(false,'Disconnected · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(e.status===403){if(recoveringAccess)throw e;await recoverLocationAccess();}else if(force)toast(e.message,true);}
+  }catch(e){if(requestedLocation!==locationId)return;transportReady=false;seatingReachable=false;renderConnection();showReadyAlert();sync(false,'Disconnected · changes unavailable');if(e.status===401){$('login').hidden=false;$('app').hidden=true;}else if(e.status===403){if(recoveringAccess)throw e;await recoverLocationAccess();}else if(force)toast(e.message,true);}finally{pendingRefreshes.delete(requestedLocation);}
 }
 async function act(action){
   if(busy||!transportReady){if(!busy)toast('Reconnect to the restaurant before making changes.',true);return false;}busy=true;$('location').disabled=true;sync(false,'Saving…');
@@ -656,7 +657,7 @@ $('staff-open').onclick=async()=>{
 };
 $('demo-reset').onclick=()=>{localStorage.removeItem('seating-preview');selected.clear();partyId=null;refresh(true);};
 let nextFloorRefresh=0,lastDiningMinute=-1;
-setInterval(()=>{if(document.hidden)return;renderConnection();const minute=Math.floor(Date.now()/60000);if(state&&!editing&&activeScreen==='floor'&&minute!==lastDiningMinute){lastDiningMinute=minute;renderFloor();renderSelection();}if(locationId&&Date.now()>=nextFloorRefresh){nextFloorRefresh=Date.now()+(runtime.mode==='local'?5000:10000);refresh();}},1000);
+setInterval(()=>{if(document.hidden)return;renderConnection();const minute=Math.floor(Date.now()/60000);if(state&&!editing&&activeScreen==='floor'&&minute!==lastDiningMinute){lastDiningMinute=minute;renderFloor();renderSelection();}if(locationId&&Date.now()>=nextFloorRefresh){nextFloorRefresh=Date.now()+(runtime.mode==='local'?5000:2000);refresh();}},1000);
 $('overview-full').onclick=()=>setView('All');
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh(true);});
 window.addEventListener('online',()=>refresh(true));window.addEventListener('offline',()=>{transportReady=false;seatingReachable=false;renderConnection();showReadyAlert();sync(false,'Disconnected · changes unavailable');});

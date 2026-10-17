@@ -1,6 +1,6 @@
 import {AppError} from './model.js';
 export const OFFLINE_MESSAGE='Online check-in is temporarily unavailable. Please see the host to join the waitlist.';
-export const HUB_POLL_MS=5000,HUB_OFFLINE_MS=15000;
+export const HUB_POLL_MS=2000,HUB_OFFLINE_MS=15000;
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json','cache-control':'no-store'}});
 const digest=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),b=>b.toString(16).padStart(2,'0')).join('');
 export const hubRow=(env,id)=>env.DB.prepare('SELECT * FROM seating_hubs WHERE location_id=?').bind(id).first();
