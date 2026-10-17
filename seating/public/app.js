@@ -147,8 +147,8 @@ function label(t){return /^[A-Z]+\d/i.test(t.number)?t.number:`${areaName(state,
 function minutes(stamp){return Math.max(0,Math.floor((Date.now()-stamp)/60000));}
 function groupTables(t){return t.group?state.tables.filter(o=>o.group===t.group):[t];}
 function updatePhoneNav(){ $('phone-floor').setAttribute('aria-pressed',activeScreen==='floor');$('phone-wait').setAttribute('aria-pressed',activeScreen==='waitlist'); }
-function showSidebar(panel){updatePhoneNav(panel==='waiting');$('workspace').dataset.panel=panel;$('workspace').classList.add('sidebar-open');$('tablet-wait').setAttribute('aria-expanded',panel==='waiting');$('tablet-details').setAttribute('aria-expanded',panel==='details');}
-function closeSidebar(){updatePhoneNav(false);$('workspace').classList.remove('sidebar-open');for(const id of ['tablet-wait','tablet-details'])$(id).setAttribute('aria-expanded','false');}
+function showSidebar(panel){updatePhoneNav(panel==='waiting');$('workspace').dataset.panel=panel;$('workspace').classList.add('sidebar-open');$('tablet-details').setAttribute('aria-expanded',panel==='details');}
+function closeSidebar(){updatePhoneNav(false);$('workspace').classList.remove('sidebar-open');for(const id of ['tablet-details'])$(id).setAttribute('aria-expanded','false');}
 function chooseTable(t){
   if(busy)return;
   if(editing){showSidebar('details');selected=new Set([t.id]);tableDraft=structuredClone(t);renderFloor();renderEditor();return;}
@@ -274,10 +274,10 @@ function renderFocusDock(){
  else summary.append(el('span',{},'Tap a table for seating and status controls.'));
  const button=(text,fn,primary=false)=>{const b=el('button',{class:primary?'primary':''},text);b.onclick=fn;actions.append(b);return b;};
  if(tables.length){
-  if(canWrite()&&tables.every(t=>t.status==='open'))button('Seat now',()=>openGuest(null,true),true);
-  button(tables.some(t=>t.roomBlock)?'Room booking':'Table details',()=>{renderSelection();showSidebar('details');},true);
+
+
   if(canWrite()&&!tables.some(t=>t.roomBlock))for(const [status,text]of [['in_use','Mark in use'],['cleaning','Cleaning'],['open','Mark open']])button(text,async()=>{if(busy)return;if(tables.some(t=>t.party)&&status!=='in_use'&&!await confirmChange('Clear seated party?',`Mark ${tables.map(label).join(' + ')} ${names[status].toLowerCase()} and finish the seated party?`))return;await act({type:'status',ids:tables.map(t=>t.id),status});});
- }else if(canWrite())button('Seat now',()=>openGuest(null,true),true);
+ }
  actions.append(el('small',{},'Blue ring: elapsed dining time · Amber: past estimate. Estimates are not guaranteed.'));
 }
 let planCache=null,planState=null,planMinute=-1;
@@ -442,7 +442,7 @@ function render(){
   $('seat-now-open').hidden=activeScreen!=='floor'||editing||!canWrite();
   $('guest-checkin').hidden=!canWrite();$('areas-open').hidden=!canEdit();
   $('phone-location').textContent=locations.find(l=>l.id===locationId)?.name||'';
-  $('edit-tab').hidden=!canEdit();if(!canEdit())editing=false;$('tablet-wait').hidden=editing;
+  $('edit-tab').hidden=!canEdit();if(!canEdit())editing=false;
   $('live-tab').classList.toggle('active',!editing);$('edit-tab').classList.toggle('active',editing);$('editor-toolbar').hidden=!editing;$('wait-panel').hidden=editing;$('selection-panel').hidden=editing;$('layout-panel').hidden=!editing||!tableDraft;
   renderScreen();
   renderAreas();renderFloor();renderWait();renderSelection();renderRecommendations();renderRoomBookings();showReadyAlert();
@@ -589,7 +589,7 @@ const openAppSettings=()=>$('app-settings-dialog').showModal();
 for(const id of ['phone-more','phone-settings','app-settings-open','app-settings-rail'])$(id).onclick=openAppSettings;
 $('phone-bookings').onclick=()=>openRoomBookings();
 $('app-settings-dialog').addEventListener('click',e=>{if(e.target.closest('button:not(.close-dialog)'))$('app-settings-dialog').close();});
-$('tablet-wait').onclick=()=>openWaitlist();$('tablet-details').onclick=()=>showSidebar('details');$('sidebar-close').onclick=closeSidebar;
+$('tablet-details').onclick=()=>showSidebar('details');$('sidebar-close').onclick=closeSidebar;
 $('add-guest').onclick=()=>openGuest();$('clear-selection').onclick=()=>{selected.clear();renderFloor();renderSelection();};
 $('combine-select').onclick=()=>{if(busy||!canWrite())return;if(combining){if(selected.size>=2)showSidebar('details');return;}combining=true;selected.clear();closeSidebar();renderFloor();renderSelection();toast('Tap the open tables you want to combine, then tap Review.');};
 $('combine-cancel').onclick=()=>{combining=false;selected.clear();closeSidebar();renderFloor();renderSelection();};
