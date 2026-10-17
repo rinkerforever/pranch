@@ -56,3 +56,9 @@ test('store hours are location state and require manager access and valid same-d
  assert.throws(()=>act(fixture(),{type:'reportHours',from:21,to:10}),/closing after opening/);
  const a=fixture(),b=fixture(),s=act(a,{type:'reportHours',from:10,to:21});assert.deepEqual(s.reportHours,{from:10,to:21});assert.equal(a.reportHours,undefined);assert.equal(b.reportHours,undefined);
 });
+test('minor clock rollback preserves guest counts without integrating elapsed time twice',()=>{
+ let s=act(fixture(),{type:'reportHours',from:10,to:21});
+ s=act(s,{type:'seatNow',size:2,ids:['a']},start-1000);
+ assert.equal(s.reporting.cursor,start);assert.equal(reportView(s,'2026-06-01',10,11,start+minute).metrics.seatedGuests,2);
+ assert.equal(reportView(s,'2026-06-01',10,11,start+minute).observedMs,minute);
+});

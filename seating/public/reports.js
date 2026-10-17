@@ -59,11 +59,13 @@ function metricChanges(before,after,now){
 }
 export function recordReport(before,after,action,now){
  const report=structuredClone(before.reporting||{version:1,zone:'America/Chicago',startedAt:now,cursor:now,days:{}});
- if(now<report.cursor)return null; // Never integrate a clock rollback twice.
+ // Cloud and Pi clocks may differ slightly. Keep the integration cursor
+ // monotonic without dropping guest counts when an event arrives earlier.
+ const cursor=Math.max(now,report.cursor);
  // Undo is only possible for the latest action. Correct that interval using
  // the restored occupancy, rather than keeping an accidental seating spike.
  const undo=action.type==='undo'?before.lastUndo?.reportDelta:null;
- addInterval(report,report.cursor,now,seatOccupancy(action.type==='undo'?after:before));
+ addInterval(report,report.cursor,cursor,seatOccupancy(action.type==='undo'?after:before));
  let delta;
  if(action.type==='undo'){
   const day=undo&&report.days[undo.date];if(day)for(const [k,v] of Object.entries(undo.metrics))day.metrics[k]=(day.metrics[k]||0)-v;
@@ -72,7 +74,7 @@ export function recordReport(before,after,action,now){
   const day=report.days[date]??=dayRow();for(const [k,v] of Object.entries(metrics))add(day.metrics,k,v);
   delta={date,metrics};
  }
- report.cursor=now;trim(report,now);after.reporting=report;return delta;
+ report.cursor=cursor;trim(report,cursor);after.reporting=report;return delta;
 }
 export function reportView(state,date,from=0,to=24,now=Date.now()){
  const report=state.reporting?structuredClone(state.reporting):null,current=seatOccupancy(state);
