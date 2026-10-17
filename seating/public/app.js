@@ -268,7 +268,7 @@ function renderFocusDock(){
  const marker=$('overview-view');if(marker)for(const [i,k]of ['x','y','width','height'].entries())marker.setAttribute(k,viewBox[i]);
  $('overview-caption').textContent=view==='All'?'Full plan · Tap an area':`${areaName(state,view)} · Tap another area`;
  const dockKey=JSON.stringify([locationId,view,current(),canWrite(),partyId,Math.floor(Date.now()/60000),waitSettings(state)]);if(dockKey===focusDockKey)return;focusDockKey=dockKey;
- const tables=current(),summary=$('focus-summary'),actions=$('focus-actions');summary.replaceChildren();actions.replaceChildren();
+ const tables=current(),summary=$('focus-summary'),actions=$('focus-actions');summary.replaceChildren();actions.replaceChildren();dock.classList.toggle('has-selection',tables.length>0);summary.hidden=!tables.length;
  summary.append(el('span',{class:'eyebrow'},tables.length?'SELECTED TABLE':'AREA VIEW'),el('strong',{},tables.length?tables.map(label).join(' + '):view==='All'?'Choose an area':areaName(state,view)));
  if(tables.length){summary.append(el('span',{},`${tables.reduce((n,t)=>n+(t.capacity||0),0)} seats · ${[...new Set(tables.map(t=>names[t.status]))].join(' / ')}`));for(const t of tables){const timing=diningProgress(t,waitSettings(state).diningMinutes);if(timing)summary.append(el('p',{class:'focus-timing'},`${tables.length>1?label(t)+': ':''}${timing.description}`));}}
  else summary.append(el('span',{},'Tap a table for seating and status controls.'));
@@ -278,7 +278,7 @@ function renderFocusDock(){
 
   if(canWrite()&&!tables.some(t=>t.roomBlock))for(const [status,text]of [['in_use','Mark in use'],['cleaning','Cleaning'],['open','Mark open']])button(text,async()=>{if(busy)return;if(tables.some(t=>t.party)&&status!=='in_use'&&!await confirmChange('Clear seated party?',`Mark ${tables.map(label).join(' + ')} ${names[status].toLowerCase()} and finish the seated party?`))return;await act({type:'status',ids:tables.map(t=>t.id),status});});
  }
- actions.append(el('small',{},'Blue ring: elapsed dining time · Amber: past estimate. Estimates are not guaranteed.'));
+
 }
 let planCache=null,planState=null,planMinute=-1;
 function currentPlan(){const minute=Math.floor(Date.now()/60000);if(planState!==state||planMinute!==minute){planCache=planWaitlist(state);planState=state;planMinute=minute;}return planCache;}

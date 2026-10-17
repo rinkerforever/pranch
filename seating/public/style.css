@@ -235,3 +235,13 @@
 @media(max-width:900px){.focus-controls{grid-column:1/-1}.focus-primary{display:grid;grid-template-columns:1fr;margin-bottom:6px}.focus-primary button{min-height:40px;font-size:14px}#focus-dock{max-height:265px}}
 @media(max-width:599px){#floor-heading-stats{flex-basis:100%;order:3}#floor-heading-stats .open-seat-total strong{display:block;font-size:17px}.phone-seat-total{display:none}#focus-dock{max-height:235px}.page-heading{gap:7px}#floor-heading-stats .legend{gap:7px}.focus-primary button{font-size:13px}}
 @media(max-width:599px){.page-actions{max-width:100%;width:100%;margin-left:0;flex-shrink:1;flex-wrap:wrap}}
+/* Let the overview use the former empty-state text space. */
+#overview-caption{display:none}
+#focus-dock{grid-template-columns:minmax(280px,1fr) minmax(240px,1fr);gap:24px}
+#focus-summary[hidden]{display:none!important}
+#floor-overview{height:135px;margin-bottom:0}
+#focus-dock.has-selection{grid-template-columns:minmax(260px,1fr) minmax(170px,.8fr) minmax(240px,1fr)}
+#focus-actions:empty{display:none}.focus-primary{margin-bottom:0}
+@media(min-width:600px) and (max-height:820px){#focus-dock{max-height:180px;grid-template-columns:minmax(240px,1fr) minmax(200px,1fr)}#floor-overview{height:110px}#focus-dock.has-selection{grid-template-columns:minmax(200px,1fr) minmax(140px,.8fr) minmax(200px,1fr)}}
+@media(min-width:600px) and (max-width:900px){#focus-dock{grid-template-columns:minmax(180px,1fr) minmax(180px,1fr)}.focus-controls{grid-column:auto}#focus-dock.has-selection{grid-template-columns:minmax(160px,1fr) minmax(130px,1fr)}#focus-dock.has-selection .focus-controls{grid-column:1/-1}}
+@media(max-width:599px){#focus-dock,#focus-dock.has-selection{grid-template-columns:minmax(0,1fr);gap:8px;max-height:255px}#floor-overview{height:95px}.focus-controls{grid-column:auto}#focus-dock.has-selection{grid-template-columns:115px minmax(0,1fr)}#focus-dock.has-selection .focus-controls{grid-column:1/-1}#focus-dock.has-selection #floor-overview{height:65px}}
