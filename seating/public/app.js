@@ -577,10 +577,12 @@ for(const key of ['1','2','3','4','5','6','7','8','9','Clear','0','Backspace']){
  button.onclick=()=>pinKey(key);$('pin-keypad').append(button);
 }
 $('login-form').addEventListener('keydown',e=>{
+ if(e.target.id==='local-pin')return; // Native editing supports the tablet keyboard, cursor and selection.
  if(runtime.mode!=='local'||!['local-pin','pin-keypad'].some(id=>$(id).contains(e.target))||e.ctrlKey||e.metaKey||e.altKey)return;
  if(/^[0-9]$/.test(e.key)||['Backspace','Delete'].includes(e.key)){e.preventDefault();pinKey(e.key);}
  if(e.key==='Enter'&&e.target.id==='local-pin'){e.preventDefault();$('login-form').requestSubmit();}
 });
+$('local-pin').addEventListener('input',()=>{$('local-pin').value=$('local-pin').value.replace(/\D/g,'').slice(0,4);$('login-error').textContent='';});
 $('login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter||$('login-form').querySelector('[type=submit]');if(b.disabled)return;if(runtime.mode==='local'&&!/^[0-9]{4}$/.test($('local-pin').value)){$('login-error').textContent='Enter your four-digit PIN.';return;}b.disabled=true;$('login-error').textContent='';try{await api('/api/login',{method:'POST',body:JSON.stringify(runtime.mode==='local'?{pin:$('local-pin').value}:{email:$('email').value,password:$('password').value})});$('password').value='';$('local-pin').value='';await loadSession();}catch(error){$('login-error').textContent=error.message;}finally{b.disabled=false;}};
 $('logout').onclick=async()=>{if(!demo)await api('/api/logout',{method:'POST'});locationId=null;state=null;transportReady=false;alerts=readyTracker();showReadyAlert();$('app').hidden=true;$('login').hidden=false;if(demo)location.href='/';};
 $('location').onchange=async()=>{combining=false;locationId=$('location').value;role=locations.find(l=>l.id===locationId).role;selected.clear();partyId=null;tableDraft=null;editing=false;version=-1;alerts=readyTracker();await refresh(true);};
