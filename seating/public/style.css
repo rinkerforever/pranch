@@ -259,3 +259,6 @@
  #focus-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:6px}
  #focus-actions button{min-width:0;min-height:40px;padding:7px 4px;font-size:12px;white-space:nowrap}
 }
+#focus-actions .reassign-button{grid-column:1/-1;flex-basis:100%}
+#reassign-dialog{max-height:90dvh;overflow:auto}#reassign-context{margin:12px 0}#reassign-options{display:grid;gap:6px}#save-layout{min-height:44px;position:sticky;left:0}
+.focus-primary:has(#reassign-open:not([hidden])){display:grid;grid-template-columns:1fr 1fr}.focus-primary #seat-now-open{grid-column:1/-1}

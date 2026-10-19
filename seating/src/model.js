@@ -217,6 +217,23 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     const group=tables.length>1?uuid():null;
     for(const t of tables) Object.assign(t,{status:'in_use',group,party:party.id,seatedAt:now});
     Object.assign(party,{status:'seated',seatedAt:now,tables:tables.map(t=>t.id)});
+  } else if(type==='reassign') {
+    const from=selectedTables(state,action.fromIds),tables=selectedTables(state,action.ids);
+    completeGroups(state,from);
+    if(from.some(t=>t.status!=='in_use'||t.roomBlock)||tables.some(t=>t.roomBlock))fail('Use Room bookings for whole-room parties. Select one seated party to move.');
+    if(new Set(from.map(t=>t.party||t.group||t.id)).size!==1)fail('Select only one seated party.');
+    combineCheck(state,tables);
+    const party=state.parties.find(p=>p.id===from[0].party&&p.status==='seated');
+    if(from[0].party&&!party)fail('The seated party is no longer available. Refresh the floor.');
+    const size=party?.size||Number(action.size);
+    if(!integer(size,1,100))fail('Enter the current party size before moving these guests.');
+    if(tables.some(t=>!t.capacity)||tables.reduce((n,t)=>n+t.capacity,0)<size)fail('Choose open tables with enough confirmed seats.');
+    if(includesBoothCombination(tables)&&action.boothAcknowledged!==true)fail('Confirm the booth combination notice before moving.');
+    const timing=waitSettings(state);if(protectsBooking(state,tables,now,now+(timing.diningMinutes+timing.cleaningMinutes)*60000))fail('These tables are needed for an upcoming room booking.');
+    const seatedAt=party?.seatedAt||from[0].seatedAt||now,group=tables.length>1?uuid():null;
+    for(const t of from)Object.assign(t,{status:'cleaning',group:null,party:null,seatedAt:null,cleaningAt:now});
+    for(const t of tables)Object.assign(t,{status:'in_use',group,party:party?.id||null,seatedAt,cleaningAt:null});
+    if(party){party.tables=tables.map(t=>t.id);delete party.childOverride;}
   } else if(type==='combine') {
     const tables=selectedTables(state,action.ids);if(tables.length<2) fail('Select at least two tables.');combineCheck(state,tables,action.combinationOverride===true);
     if(tables.some(t=>t.roomBlock))fail('Manage this whole-room block from Room bookings.');
@@ -263,7 +280,7 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     if(state.tables.some(t=>t.id!==table.id&&t.area===v.area&&t.number===number))fail('That table number already exists in this area.');
     const allowed=[...new Set(Array.isArray(v.allowed)?v.allowed:[])];
     if(allowed.some(id=>!state.tables.some(t=>t.id===id&&t.id!==table.id&&t.area===v.area&&!(v.kind==='booth'&&t.kind==='booth'))))fail('Combine a booth with a table, or tables in the same area.');
-    if(state.tables.some(t=>(table.allowed.includes(t.id)||allowed.includes(t.id))&&(t.status!=='open'||t.group)))fail('Open and separate linked tables before changing their combinations.');
+    if(state.tables.some(t=>table.allowed.includes(t.id)!==allowed.includes(t.id)&&(t.status!=='open'||t.group)))fail('Open and separate linked tables before changing their combinations.');
     for(const t of state.tables) t.allowed=t.allowed.filter(id=>id!==table.id);
     Object.assign(table,{number,area:v.area,kind:v.kind,orientation:v.orientation,capacity,x:v.x,y:v.y,allowed});
     for(const t of state.tables) if(allowed.includes(t.id))t.allowed.push(table.id);

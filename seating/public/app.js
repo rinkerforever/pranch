@@ -14,7 +14,7 @@ import {guestForecast} from './wait-forecast.js';
 import {preferredAreas,preferredSeating} from './accessibility.js';
 import {presetCombinations,includesBoothCombination,childBoothFit} from './combinations.js';
 import { suggestTables,preferDiningTables } from './suggestions.js';
-import { WALL_PATH, ROOM_LABELS, DOORS, upgradeNumbering, openSeats } from './floor.js';
+import { WALL_PATH, ROOM_LABELS, DOORS, locationWallPath, upgradeNumbering, openSeats } from './floor.js';
 const $=id=>document.getElementById(id), NS='http://www.w3.org/2000/svg';
 const demo=new URLSearchParams(location.search).get('demo')==='1';
 let state=null,version=0,profile=null,locations=[],locationId=null,role='viewer',selected=new Set(),partyId=null,editing=false,tableDraft=null,editGuest=null,busy=false,view='All',viewBox=[0,-20,1660,950],toastTimer,uploadBusy=false;
@@ -137,7 +137,7 @@ async function act(action){
     state=presetCombinations(upgradeNumbering(data.state));version=data.version;if(demo)localStorage.setItem('seating-preview',JSON.stringify(state));
     if(action.type==='seat'||action.type==='seatNow'||action.type==='cancelParty')partyId=null;
     selected=new Set([...selected].filter(id=>!releasedTables.includes(id)&&state.tables.some(t=>t.id===id)));
-    if(['status','seat','seatNow','combine'].includes(action.type)){selected.clear();combining=false;closeSidebar();}
+    if(['status','seat','seatNow','combine','reassign'].includes(action.type)){selected.clear();combining=false;closeSidebar();}
     lastConnectionConfirmed=Date.now();seatingReachable=true;render();connectionStatus();showReadyAlert();return true;
   }catch(e){toast(e.message,true);sync(false,'Change not saved');if(e.status===409){busy=false;await refresh(true);}if(e.status===401){$('app').hidden=true;$('login').hidden=false;}if(e.status===403){busy=false;await recoverLocationAccess();}return false;}finally{busy=false;$('location').disabled=false;}
 }
@@ -217,7 +217,7 @@ function renderFloor(){
    viewport.replaceChildren(defs,scene);floorSceneKey=null;
   }
   const bounds=$('floor-view-bounds');for(const [i,name] of ['x','y','width','height'].entries())bounds.setAttribute(name,viewBox[i]);
-  const sceneKey=JSON.stringify([locationId,state.background||null,...(state.background?[]:[areaOptions(state),roomOptions(state).map(r=>{const info=roomInfo(state,r.id);return [r.id,info.capacity,info.blocks.length];}),activeRoomBlocks(state).some(b=>b.roomId==='combined')])]);
+  const sceneKey=JSON.stringify([locationId,locationWallPath(locationId,state),state.background||null,...(state.background?[]:[areaOptions(state),roomOptions(state).map(r=>{const info=roomInfo(state,r.id);return [r.id,info.capacity,info.blocks.length];}),activeRoomBlocks(state).some(b=>b.roomId==='combined')])]);
   if(sceneKey!==floorSceneKey){
    const floor=$('floor-static');floor.replaceChildren();floorSceneKey=sceneKey;
   if(state.background)floor.append(planImage(floorImageUrl(endpoint('floorplan'),state.background,demo),state.background.covers));
@@ -236,6 +236,7 @@ function renderFloor(){
     floor.append(svg('rect',{x:1475,y:485,width:94,height:42,rx:3,fill:'none',stroke:'#b1b8ad','stroke-width':2}));
   }
   }
+  const wall=locationWallPath(locationId,state);let extra=$('location-walls');if(wall){if(!extra){extra=svg('path',{id:'location-walls',class:'wall','aria-label':'Tyler table dividers'});$('floor-static').append(extra);}extra.setAttribute('d',wall);}else extra?.remove();
   const groups=[...new Set(state.tables.map(t=>t.group).filter(Boolean))].map(id=>({id,tables:state.tables.filter(t=>t.group===id)}));
   keyedChildren($('floor-groups'),groups,g=>g.id,g=>JSON.stringify(g.tables.map(t=>[t.id,t.x,t.y])),g=>{const node=svg('g');for(let i=1;i<g.tables.length;i++){const a=g.tables[i-1],b=g.tables[i];node.append(svg('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:'group-line'}));}return node;});
   keyedChildren($('floor-tables'),state.tables,t=>t.id,t=>JSON.stringify([locationId,t,areaClosed(state,t.area),selected.has(t.id),editing,combining,canWrite(),t.status==='in_use'?[Math.floor(Date.now()/60000),waitSettings(state).diningMinutes]:null]),tableSymbol);
@@ -248,6 +249,8 @@ function renderFloor(){
   $('combine-select').disabled=combining&&selected.size<2;
   $('selection-hint').textContent=combining?'Tap open tables, then Review to combine.':selected.size?`${selected.size} table${selected.size===1?'':'s'} selected`:'Tap a table to select it';
   $('plan-note').textContent=state.background?`Uploaded plan: ${state.background.name}. Review seats and table positions in Layout editor.`:'Chair counts follow your PDF. Booth capacities remain unconfirmed until set in Layout editor.';
+  $('reassign-open').hidden=!canWrite()||!current().length||current().some(t=>t.status!=='in_use'||t.roomBlock);
+  $('save-layout').disabled=!editing||!tableDraft||busy;
   renderFocusDock();
 }
 let overviewKey='',focusDockKey='';
@@ -275,6 +278,7 @@ function renderFocusDock(){
  else summary.append(el('span',{},'Tap a table for seating and status controls.'));
  const button=(text,fn,primary=false)=>{const b=el('button',{class:primary?'primary':''},text);b.onclick=fn;actions.append(b);return b;};
  if(tables.length){
+
 
 
   if(canWrite()&&!tables.some(t=>t.roomBlock))for(const [status,text]of [['in_use','Mark in use'],['cleaning','Cleaning'],['open','Mark open']])button(text,async()=>{if(busy)return;if(tables.some(t=>t.party)&&status!=='in_use'&&!await confirmChange('Clear seated party?',`Mark ${tables.map(label).join(' + ')} ${names[status].toLowerCase()} and finish the seated party?`))return;await act({type:'status',ids:tables.map(t=>t.id),status});});
@@ -342,7 +346,7 @@ function renderWaitlistView(){
     const contactButton=el('button',{class:'small'},title);contactButton.onclick=async()=>{if(contact==='away'&&!await confirmChange('Guest not present?',`Pause table planning for ${p.name}? Their original arrival time and quote stay saved. Return them to waiting when they arrive.`))return;await act({type:'partyContact',id:p.id,contact});};action.append(contactButton);
    }
   }
-  if(canWrite()){const edit=el('button',{class:'quiet small'},'Review / edit guest');edit.onclick=()=>openGuest(p);action.append(edit);const remove=el('button',{class:'quiet small danger'},'Remove');remove.onclick=async()=>{if(await confirmChange('Remove waiting party?',`Remove ${p.name} from the waiting list?`))await act({type:'cancelParty',id:p.id});};action.append(remove);}
+  if(canWrite()){const edit=el('button',{class:'quiet small'},'Adjust party');edit.onclick=()=>openGuest(p);action.append(edit);const remove=el('button',{class:'quiet small danger'},'Remove');remove.onclick=async()=>{if(await confirmChange('Remove waiting party?',`Remove ${p.name} from the waiting list?`))await act({type:'cancelParty',id:p.id});};action.append(remove);}
   const controls=el('div',{class:'wait-row-actions'});controls.append(...action.childNodes);action.append(controls);
   row.append(guest,wait,eta,table,action);return row;
  });renderQuote();
@@ -371,6 +375,7 @@ function renderSelection(){
   for(const t of tables){const p=state.parties.find(p=>p.id===t.party);summary.append(el('p',{},`${label(t)} · ${names[t.status]}${t.seatedAt?' · '+minutes(t.seatedAt)+' min':''}${p?' · '+p.name+' ('+p.size+')'+(p.highChair?' · High chair':'')+(p.booster?' · Booster':'')+(p.accessibility?' · Accessible seating':'')+(p.childOverride?' · Child override':''):''}`));}box.append(summary);
   if(tables.some(t=>t.roomBlock)){const b=el('button',{class:'primary wide'},'Manage whole-room booking');b.onclick=openRoomBookings;box.append(el('p',{class:'combination-notice'},'These tables belong to a whole-room block.'),b);return;}
   if(!canWrite())return;
+  if(tables.every(t=>t.status==='in_use')){const move=el('button',{class:'wide'},'Reassign party');move.onclick=()=>openReassign(tables);box.append(move);}
   const boothNotice='This combination includes a fixed booth. Confirm the nearby table works for this party and leaves the aisle clear.';
   if(includesBoothCombination(tables))box.append(el('p',{class:'combination-notice'},boothNotice));
   if(party){
@@ -433,7 +438,7 @@ function renderAreas(){
 }
 function renderEditor(){
   $('layout-panel').hidden=!editing||!tableDraft;if(!editing||!tableDraft)return;
-  const t=tableDraft;$('layout-title').textContent=t.id?'Edit '+label(t):'Add table';$('table-area').replaceChildren(...areaOptions(state).map(a=>new Option(a.name,a.id)));$('table-area').value=t.area;$('table-number').value=t.number;$('table-kind').value=t.kind;$('table-capacity').value=t.capacity??'';$('table-orientation').value=t.orientation;$('table-x').value=t.x;$('table-y').value=t.y;$('remove-table').hidden=!t.id;renderAllowed(t.allowed||[]);
+  $('save-layout').disabled=false;const t=tableDraft;$('layout-title').textContent=t.id?'Edit '+label(t):'Add table';$('table-area').replaceChildren(...areaOptions(state).map(a=>new Option(a.name,a.id)));$('table-area').value=t.area;$('table-number').value=t.number;$('table-kind').value=t.kind;$('table-capacity').value=t.capacity??'';$('table-orientation').value=t.orientation;$('table-x').value=t.x;$('table-y').value=t.y;$('remove-table').hidden=!t.id;renderAllowed(t.allowed||[]);
 }
 function renderAllowed(allowed=[]){const area=$('table-area').value,kind=$('table-kind').value;$('allowed-tables').replaceChildren();
   for(const t of state.tables.filter(t=>t.area===area&&t.id!==tableDraft?.id&&!(kind==='booth'&&t.kind==='booth'))){const l=el('label'),c=el('input',{type:'checkbox',value:t.id});c.checked=allowed.includes(t.id);l.append(c,document.createTextNode(`${label(t)} · ${t.capacity} seats`));$('allowed-tables').append(l);}
@@ -543,6 +548,24 @@ $('undo-action').onclick=async()=>{
  if(await confirmChange('Undo last action?',`Undo ${undoLabels[undo.type]} for this restaurant? This restores the affected tables and guests. Only the most recent eligible action within five minutes can be undone.`))await act({type:'undo',undoId:undo.id});
 };
 
+$('reassign-open').onclick=()=>openReassign(current());
+let reassignmentIds=[];
+function openReassign(tables){
+ reassignmentIds=tables.map(t=>t.id);const party=state.parties.find(p=>p.id===tables[0]?.party);
+ $('reassign-context').textContent=`Move ${party?.name||'guests'} from ${tables.map(label).join(' + ')}`;
+ $('reassign-size-label').hidden=!!party;$('reassign-size').value=party?.size||2;
+ renderReassignment();$('reassign-dialog').showModal();
+}
+function renderReassignment(){
+ const from=state.tables.filter(t=>reassignmentIds.includes(t.id)),party=state.parties.find(p=>p.id===from[0]?.party),size=party?.size||Number($('reassign-size').value),box=$('reassign-options');box.replaceChildren();
+ if(!Number.isInteger(size)||size<1||size>100)return;
+ const options=suggestTables(walkInTables(state,Date.now(),currentPlan().context.duration),size,15,party?.accessibility?preferredAreas(state):new Set(),partyRoomAreas(state));
+ for(const tables of options){const button=el('button',{class:'suggestion'},`${tables.map(label).join(' + ')} · ${tables.reduce((n,t)=>n+t.capacity,0)} seats`);
+  button.onclick=async()=>{const boothAcknowledged=includesBoothCombination(tables);if(!await confirmChange('Move seated party?',`Move to ${tables.map(label).join(' + ')}? The original tables will be marked Cleaning.${boothAcknowledged?' Includes a booth: confirm the fit and aisle clearance.':''}`))return;button.disabled=true;try{if(await act({type:'reassign',fromIds:reassignmentIds,ids:tables.map(t=>t.id),size,boothAcknowledged})){$('reassign-dialog').close();toast('Party reassigned. Original tables need cleaning.');}}finally{if($('reassign-dialog').open)renderReassignment();}};box.append(button);
+ }
+ if(!options.length)box.append(el('p',{class:'muted'},'No open table combination fits this party.'));
+}
+$('reassign-size').addEventListener('input',renderReassignment);
 function updatePartySizePicker(custom=false){
  $('custom-party-size').hidden=!custom;
  for(const button of $('party-size-buttons').children)button.setAttribute('aria-pressed',String(button.dataset.size==='custom'?custom:!custom&&Number(button.dataset.size)===Number($('guest-size').value)));
@@ -613,7 +636,7 @@ $('guest-form').onsubmit=async e=>{
 for(const b of document.querySelectorAll('.close-dialog'))b.onclick=()=>b.closest('dialog').close();
 $('add-table').onclick=()=>{showSidebar('details');tableDraft={area:areaOptions(state).some(a=>a.id===view)?view:areaOptions(state)[0]?.id,number:'',capacity:4,kind:'table',orientation:'lr',x:Math.round(viewBox[0]+viewBox[2]/2),y:Math.round(viewBox[1]+viewBox[3]/2),allowed:[]};selected.clear();renderEditor();$('table-number').focus();};
 $('table-area').onchange=()=>renderAllowed();$('table-kind').onchange=()=>renderAllowed();
-$('layout-form').onsubmit=async e=>{e.preventDefault();if(!tableDraft)return;e.submitter.disabled=true;const table={area:$('table-area').value,number:$('table-number').value,kind:$('table-kind').value,capacity:$('table-capacity').value===''?null:Number($('table-capacity').value),orientation:$('table-orientation').value,x:Number($('table-x').value),y:Number($('table-y').value),allowed:[...$('allowed-tables').querySelectorAll('input:checked')].map(i=>i.value)};const ok=await act({type:tableDraft.id?'layout':'addTable',id:tableDraft.id,table});e.submitter.disabled=false;if(ok){tableDraft=null;$('layout-panel').hidden=true;toast('Table layout saved.');}};
+$('layout-form').onsubmit=async e=>{e.preventDefault();if(!tableDraft)return;e.submitter.disabled=true;const table={area:$('table-area').value,number:$('table-number').value,kind:$('table-kind').value,capacity:$('table-capacity').value===''?null:Number($('table-capacity').value),orientation:$('table-orientation').value,x:Number($('table-x').value),y:Number($('table-y').value),allowed:[...$('allowed-tables').querySelectorAll('input:checked')].map(i=>i.value)};const ok=await act({type:tableDraft.id?'layout':'addTable',id:tableDraft.id,table});e.submitter.disabled=false;if(ok){tableDraft=null;$('layout-panel').hidden=true;$('save-layout').disabled=true;toast('Table layout saved.');}};
 $('remove-table').onclick=async()=>{if(!tableDraft?.id)return;if(await confirmChange('Remove table?',`Remove ${label(tableDraft)} from this layout? You can add it again in Layout editor.`)&&await act({type:'removeTable',id:tableDraft.id})){tableDraft=null;selected.clear();$('layout-panel').hidden=true;renderFloor();}};
 for(const[id,factor]of [['zoom-in',.75],['zoom-out',1.333]])$(id).onclick=()=>{viewFitted=false;const[x,y,w,h]=viewBox;const nw=Math.min(2000,Math.max(120,w*factor)),nh=h*(nw/w);viewBox=[x+(w-nw)/2,y+(h-nh)/2,nw,nh];renderFloor();};$('zoom-fit').onclick=()=>setView(view);
 // Pan the canvas from an empty area, keeping table dragging exclusive to Layout editor.

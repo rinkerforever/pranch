@@ -28,6 +28,16 @@ export function initialTables() {
   return tables;
 }
 export const FLOOR = { width:1660, height:950 };
+// Store-specific dividers on Tyler's built-in plan; imported plans are untouched.
+export function locationWallPath(locationId,state){
+ if(locationId!=='loc_tyler'||state.background)return '';
+ return [['32','22'],['82','72']].map(pair=>{
+  const tables=pair.map(number=>state.tables.find(t=>t.area==='B'&&String(t.number).replace(/^B/i,'')===number));
+  if(tables.some(t=>!t))return '';
+  const [a,b]=tables,x=(a.x+b.x)/2,y=(a.y+b.y)/2;
+  return Math.abs(a.x-b.x)>=Math.abs(a.y-b.y)?`M${x} ${y-28}V${y+28}`:`M${x-28} ${y}H${x+28}`;
+ }).join(' ');
+}
 // Keep the kitchen above the C booths and allow clearance around the south booth benches.
 export const WALL_PATH = 'M10 870V0H1610V165M1610 230V297M1610 380V870M10 870H1610M10 90H110V340H10M10 400H110V650H10M110 650V770M10 770H110M165 310V638H560V600H700V555H940L960 537H1240L1310 500L1395 438V330H1430M165 410H525V317H1115V400H1310V362H1340L1360 335H1430M1115 317H1240V377H1310M1030 0V134H1045M1080 140H1335M1370 140H1385V0M1205 0V130M1610 230H1495M1460 190L1420 150L1405 135L1385 125M1510 410V328L1520 297H1610M1585 410H1610M10 340H90M10 400H90M676 638V870 M900 680H1075 M1327 666V870 M1540 585H1610';
 // Door openings from the manager's annotated plan. Blue swing arcs distinguish them from walls.

@@ -33,7 +33,7 @@ function trim(report,now){
  for(const date of Object.keys(report.days))if(date<oldest)delete report.days[date];
 }
 const add=(metrics,key,value=1)=>{metrics[key]=(metrics[key]||0)+value;};
-function metricChanges(before,after,now){
+function metricChanges(before,after,now,action){
  const m={},previous=new Map(before.parties.map(p=>[p.id,p]));
  for(const p of after.parties){
   const old=previous.get(p.id);
@@ -51,7 +51,7 @@ function metricChanges(before,after,now){
  for(const t of before.tables){
   const next=tables.get(t.id);if(!next)continue;
   if(t.status==='cleaning'&&next.status==='open'&&Number.isFinite(t.cleaningAt)){add(m,'cleaningCount');add(m,'cleaningMinutes',Math.max(0,(now-t.cleaningAt)/60000));}
-  if(t.status==='in_use'&&next.status!=='in_use'&&!t.party&&Number.isFinite(t.seatedAt)){
+  if(action?.type!=='reassign'&&t.status==='in_use'&&next.status!=='in_use'&&!t.party&&Number.isFinite(t.seatedAt)){
    const key=(t.group||t.id)+':'+t.seatedAt;if(!visits.has(key)){visits.add(key);add(m,'diningCount');add(m,'diningMinutes',Math.max(0,(now-t.seatedAt)/60000));}
   }
  }
@@ -70,7 +70,7 @@ export function recordReport(before,after,action,now){
  if(action.type==='undo'){
   const day=undo&&report.days[undo.date];if(day)for(const [k,v] of Object.entries(undo.metrics))day.metrics[k]=(day.metrics[k]||0)-v;
  }else{
-  const date=reportClock(now,report.zone).date,metrics=metricChanges(before,after,now);
+  const date=reportClock(now,report.zone).date,metrics=metricChanges(before,after,now,action);
   const day=report.days[date]??=dayRow();for(const [k,v] of Object.entries(metrics))add(day.metrics,k,v);
   delta={date,metrics};
  }
