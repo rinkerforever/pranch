@@ -53,7 +53,12 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
   if(['reportHours','cleanPlan','saveArea','deleteArea','addRoomCombination','deleteRoomCombination','layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
-  if(type==='reportHours'){
+  if(type==='areaPriorities'){
+    if(!['admin','manager'].includes(role))throw new AppError('Manager access required.',403);
+    const areas=areaOptions(state),values=action.priorities;
+    if(!values||typeof values!=='object'||Array.isArray(values)||Object.keys(values).some(id=>!areas.some(a=>a.id===id))||areas.some(a=>!integer(values[a.id],1,10)))fail('Set every area priority from 1 to 10.');
+    state.areaPriorities=Object.fromEntries(areas.map(a=>[a.id,values[a.id]]));
+  }else if(type==='reportHours'){
     if(!integer(action.from,0,23)||!integer(action.to,1,24)||action.from>=action.to)fail('Choose opening and closing hours from 0 to 24, with closing after opening.');
     state.reportHours={from:action.from,to:action.to};
   }else if(type==='areaAvailability'){

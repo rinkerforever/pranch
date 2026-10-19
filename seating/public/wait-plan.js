@@ -1,5 +1,5 @@
 import {scheduledRooms,overlaps} from './rooms.js';
-import {partyRoomAreas} from './areas.js';
+import {partyRoomAreas,seatingPriority} from './areas.js';
 import {combinationCandidates,usesPartyRoom} from './suggestions.js';
 import {preferredAreas,preferredSeating} from './accessibility.js';
 import {serviceTables} from './service-ops.js';
@@ -30,7 +30,10 @@ function choose(candidates,available,size,context,accessibility=false){
   const preferred=accessibility&&preferredSeating(tables,context?.preferredAreas||new Set());
   // Prefer a suitable marked area when its extra predicted wait is at most 15 minutes.
   const rank=minutes-(preferred?15:0),bestRank=best?best.minutes-(best.accessiblePreferred?15:0):Infinity;
-  if(!best||rank<bestRank||rank===bestRank&&(preferred&&!best.accessiblePreferred||preferred===!!best.accessiblePreferred&&(minutes<best.minutes||minutes===best.minutes&&(Number(usesPartyRoom(tables,rooms))<Number(usesPartyRoom(best.tables,rooms))||usesPartyRoom(tables,rooms)===usesPartyRoom(best.tables,rooms)&&(seats<best.capacity||seats===best.capacity&&tables.length<best.tables.length)))))best={tables,minutes,capacity:seats,ready:minutes===0,...(accessibility?{accessiblePreferred:preferred}:{})};
+  const score=[rank,Number(!preferred),minutes,Number(usesPartyRoom(tables,rooms)),seatingPriority(tables,context?.areaPriorities),seats,tables.length];
+  const previous=best?[bestRank,Number(!best.accessiblePreferred),best.minutes,Number(usesPartyRoom(best.tables,rooms)),seatingPriority(best.tables,context?.areaPriorities),best.capacity,best.tables.length]:null;
+  const difference=previous?score.map((v,i)=>v-previous[i]).find(v=>v!==0): -1;
+  if(!best||difference<0)best={tables,minutes,capacity:seats,ready:minutes===0,...(accessibility?{accessiblePreferred:preferred}:{})};
  }return best;
 }
 export function estimateNewParty(plan,size,preferences={}){return Number.isInteger(size)&&size>0&&size<=100?choose(plan.candidates,plan.available,size,plan.context,preferences.accessibility===true):null;}
@@ -48,7 +51,7 @@ export function seatingOptions(plan,size,preferences={}){
  });
  const rooms=plan.context.partyRoomAreas;
  const open=options.filter(o=>o.ready),diningOpen=open.filter(o=>!usesPartyRoom(o.tables,rooms));
- const order=(a,b)=>(a.minutes-(a.accessiblePreferred?15:0))-(b.minutes-(b.accessiblePreferred?15:0))||Number(!!b.accessiblePreferred)-Number(!!a.accessiblePreferred)||a.minutes-b.minutes||Number(usesPartyRoom(a.tables,rooms))-Number(usesPartyRoom(b.tables,rooms))||a.capacity-b.capacity||a.tables.length-b.tables.length;
+ const order=(a,b)=>(a.minutes-(a.accessiblePreferred?15:0))-(b.minutes-(b.accessiblePreferred?15:0))||Number(!!b.accessiblePreferred)-Number(!!a.accessiblePreferred)||a.minutes-b.minutes||Number(usesPartyRoom(a.tables,rooms))-Number(usesPartyRoom(b.tables,rooms))||seatingPriority(a.tables,plan.context.areaPriorities)-seatingPriority(b.tables,plan.context.areaPriorities)||a.capacity-b.capacity||a.tables.length-b.tables.length;
  return {open:(diningOpen.length?diningOpen:open).sort(order).slice(0,5),soon:options.filter(o=>!o.ready&&o.minutes<=30).sort(order).slice(0,5)};
 }
 export function waitRange(estimate){
@@ -58,7 +61,7 @@ export function waitRange(estimate){
  return `${lower}–${upper} min`;
 }
 export function planWaitlist(state,now=Date.now()){
- const settings=waitSettings(state),available=new Map(),eligible=new Set(serviceTables(state).map(t=>t.id)),context={now,duration:settings.diningMinutes+settings.cleaningMinutes,bookings:scheduledRooms(state),preferredAreas:preferredAreas(state),partyRoomAreas:partyRoomAreas(state)};
+ const settings=waitSettings(state),available=new Map(),eligible=new Set(serviceTables(state).map(t=>t.id)),context={now,areaPriorities:state.areaPriorities||{},duration:settings.diningMinutes+settings.cleaningMinutes,bookings:scheduledRooms(state),preferredAreas:preferredAreas(state),partyRoomAreas:partyRoomAreas(state)};
  for(const t of state.tables){
   const elapsed=t.seatedAt?Math.max(0,(now-t.seatedAt)/60000):0;
   const cleaningElapsed=t.cleaningAt?Math.max(0,(now-t.cleaningAt)/60000):0;

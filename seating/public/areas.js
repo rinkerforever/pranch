@@ -19,3 +19,4 @@ export function roomOptions(state){
 }
 
 export const partyRoomAreas=state=>new Set(areaOptions(state).filter(a=>a.kind==='room').map(a=>a.id));
+export const seatingPriority=(tables,priorities={})=>Math.max(1,...tables.map(t=>priorities?.[t.area]??5));
