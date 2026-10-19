@@ -2,6 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {initialState,applyAction} from '../src/model.js';
 const now=1800000000000,run=(s,a)=>applyAction(s,a,'host',now);
+test('Fun Zone timestamps survive repeat check-ins and reassignment, stop on return and reset for the next trip',()=>{
+ let s=run(initialState(),{type:'seatNow',size:4,ids:['B-70']});
+ const enter={type:'funZone',ids:['B-70'],active:true};
+ s=applyAction(s,enter,'host',now+1000);s=applyAction(s,enter,'host',now+5000);
+ assert.equal(s.tables.find(t=>t.id==='B-70').funZoneSince,now+1000);
+ s=applyAction(s,{type:'reassign',fromIds:['B-70'],ids:['B-60']},'host',now+10000);
+ assert.equal(s.tables.find(t=>t.id==='B-60').funZoneSince,now+1000);
+ assert.equal(s.tables.find(t=>t.id==='B-70').funZoneSince,null);
+ s=applyAction(s,{type:'funZone',ids:['B-60'],active:false},'host',now+11000);
+ assert.equal(s.tables.find(t=>t.id==='B-60').funZoneSince,null);
+ s=applyAction(s,{type:'funZone',ids:['B-60'],active:true},'host',now+12000);
+ assert.equal(s.tables.find(t=>t.id==='B-60').funZoneSince,now+12000);
+ s=applyAction(s,{type:'status',ids:['B-60'],status:'open'},'host',now+13000);
+ assert.equal(s.tables.find(t=>t.id==='B-60').funZoneSince,null);
+});
 test('FunZone preserves occupancy, timer, transfers with reassignment and clears on release',()=>{
  let s=run(initialState(),{type:'seatNow',size:4,ids:['B-70']});
  s=run(s,{type:'funZone',ids:['B-70'],active:true});

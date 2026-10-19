@@ -10,6 +10,35 @@ function fixture(){
   const env={DB,SUPABASE_URL:'https://auth.example.test',SUPABASE_PUBLISHABLE_KEY:'public',ASSETS:{fetch:()=>new Response('page')}};
   return{sqlite,env,async call(path,body,token='admin',origin='https://seating.example.test'){return worker.fetch(new Request('https://seating.example.test'+path,{method:body?'POST':'GET',headers:{cookie:`seat_access=${token}`,origin,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),env,{waitUntil(){}});}};
 }
+test('Fun Zone QR privately updates occupied groups, rejects stale visits and keeps repeat scans idempotent',async t=>{
+ t.mock.method(globalThis,'fetch',async(url,options)=>new Response(JSON.stringify({id:options.headers.authorization==='Bearer viewer'?'auth-viewer':'auth-admin'})));
+ const f=fixture();t.after(()=>f.sqlite.close());
+ const action=async action=>{const current=await(await f.call('/api/locations/loc/state')).json();return f.call('/api/locations/loc/actions',{version:current.version,action});};
+ assert.equal((await action({type:'funZoneSetup'})).status,200);
+ let staff=await(await f.call('/api/locations/loc/state')).json(),key=staff.state.funZoneKey;
+ const guest=async(body,k=key,origin='https://seating.example.test')=>worker.fetch(new Request('https://seating.example.test/api/funzone/loc',{method:body?'POST':'GET',headers:{'x-funzone-key':k,origin,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),f.env,{waitUntil(){}});
+ assert.equal((await guest(null,'wrong')).status,403);
+ assert.equal((await action({type:'seatNow',name:'Private Guest',size:8,ids:['B-70','B-60']})).status,200);
+ const listing=await(await guest()).json(),table=listing.tables.find(t=>t.id==='B-70');
+ assert.ok(!JSON.stringify(listing).includes('Private Guest'));assert.deepEqual(Object.keys(table).sort(),['id','label','visit']);
+ const enter={table:table.id,visit:table.visit,action:'enter'};
+ assert.equal((await guest(enter,key,'https://evil.test')).status,403);
+ assert.equal((await guest({...enter,visit:'bad'})).status,409);
+ const first=await guest(enter);assert.equal(first.status,200);const since=(await first.json()).since;assert.ok(since);
+ staff=await(await f.call('/api/locations/loc/state')).json();const version=staff.version;
+ assert.ok(staff.state.tables.filter(t=>['B-70','B-60'].includes(t.id)).every(t=>t.funZoneSince===since&&t.status==='in_use'));
+ assert.equal((await(await guest(enter)).json()).since,since);
+ assert.equal((await(await f.call('/api/locations/loc/state')).json()).version,version);
+ assert.equal((await(await guest({...enter,action:'back'})).json()).since,null);
+ assert.equal((await action({type:'status',ids:['B-70','B-60'],status:'open'})).status,200);
+ assert.equal((await guest(enter)).status,409);
+ await action({type:'seatNow',size:8,ids:['B-70','B-60']});
+ assert.equal((await guest(enter)).status,409);
+ const qr=await f.call('/api/locations/loc/qr?kind=funzone');assert.equal(qr.status,200);assert.match(await qr.text(),/<svg/);
+ await action({type:'funZoneSetup'});assert.equal((await(await f.call('/api/locations/loc/state')).json()).state.funZoneKey,key);
+ f.sqlite.exec("INSERT INTO seating_hubs(location_id,enabled,token_hash,last_seen,local_url,created_by) VALUES('loc',1,'test',0,'https://pi.test','admin')");
+ assert.equal((await guest()).status,503);
+});
 test('portal assignments restrict old seating grants, direct requests and newly enabled access',async t=>{
  t.mock.method(globalThis,'fetch',async(url,options)=>new Response(JSON.stringify({id:options.headers.authorization==='Bearer viewer'?'auth-viewer':'auth-admin'})));
  const f=fixture();t.after(()=>f.sqlite.close());

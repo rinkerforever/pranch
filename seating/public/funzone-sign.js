@@ -1,0 +1,5 @@
+const $=id=>document.getElementById(id),id=new URLSearchParams(location.search).get('location');
+$('print').onclick=()=>window.print();
+const preview=document.createElement('a');preview.textContent='Open guest Fun Zone page';document.querySelector('.print-controls').append(preview);
+try{const r=await fetch(`/api/locations/${encodeURIComponent(id)}/state`);if(r.ok){const {state}=await r.json();const runtime=await(await fetch('/api/runtime')).json();if(state.funZoneKey)preview.href=`${runtime.cloudUrl||location.origin}/funzone.html?location=${encodeURIComponent(id)}#key=${state.funZoneKey}`;}}catch{}
+try{const r=await fetch('/api/session');if(!r.ok)throw new Error('Sign in to the seating app first.');const data=await r.json(),loc=data.locations.find(l=>l.id===id);if(!loc)throw new Error('Restaurant access required.');$('restaurant').textContent=loc.name;$('qr').onload=()=>{$('print').disabled=false;};$('qr').onerror=()=>{$('error').textContent='QR unavailable. Open Fun Zone insert from Guest check-in to set it up.';};$('qr').src=`/api/locations/${encodeURIComponent(id)}/qr?kind=funzone`;$('qr').hidden=false;}catch(e){$('error').textContent=e.message;}

@@ -57,6 +57,14 @@ After deployment, sign in with an existing system administrator account, select 
 
 ## Verification
 
+## Fun Zone guest QR and 4 × 6 inserts
+
+Select the restaurant, then **Settings → Guest check-in → Fun Zone napkin insert (4 × 6)**. This creates a stable, location-specific QR link and opens the printable insert. Print at actual size with background graphics enabled. The same insert can go on every table in that restaurant. It is separate from waitlist check-in and works even when the waitlist form is closed.
+
+Guests scan, choose their full table number, and tap **We’re in the Fun Zone**. The existing occupied-table FunZone badge shows elapsed minutes. The seating status stays in use; combined tables update together. Guests tap **We’re back at our table**, or staff use the existing return control, to stop the timer. Repeated entry requests preserve the start time. Clearing a table clears the timer; reassignment carries the timer to the new table. A previously opened guest page cannot update a new seating at the same table.
+
+The printed link grants only table Fun Zone updates and does not expose guest names or the waitlist. Treat copies as restaurant guest signage. Guest writes use the same version checks and Pi confirmation as staff writes; an offline paired restaurant refuses public updates. Staff can still use the local app. Older FunZone markers without a timestamp show no invented elapsed duration; the next check-in starts the clock.
+
 `node --test tests/*.test.js` verifies PDF seat counts, invalid capacities, authorization, disabled accounts, combination rules, party lifecycle, and competing writes against actual SQLite. Browser QA verifies rendered chair counts and guest/layout flows. Guest notes are rendered as text rather than HTML. Closed guest records are retained up to 24 hours (at most 200), with active parties retained independently.
 
 ## Operational limits

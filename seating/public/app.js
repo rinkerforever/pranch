@@ -184,7 +184,7 @@ function tableSymbol(t){
   if(t.status==='in_use'&&t.funZone){
    const badge=svg('g',{class:'funzone-badge',transform:`translate(${w/2+1} ${-h/2-1})`,'pointer-events':'none'});
    badge.append(svg('circle',{r:11,fill:'#ffe19a',stroke:'#ac750e','stroke-width':1.5}),svg('path',{d:'M-5 -7H5L4 0 6 7H-6L-4 0Z',fill:'#ad2429'}),svg('rect',{x:-3,y:-5,width:6,height:4,rx:1,fill:'#fff5d5'}),svg('path',{d:'M-3 2V4M-4 3H-2M1 3H3',stroke:'#fff5d5','stroke-width':1.3}));group.append(badge);
-   const tag=svg('g',{'pointer-events':'none'});tag.append(svg('rect',{x:-27,y:h/2+12,width:54,height:12,rx:4,fill:'#ffda75'}),svg('text',{x:0,y:h/2+21,'text-anchor':'middle',fill:'#372900','font-size':8,'font-weight':700},'In FunZone'));group.append(tag);
+   const tag=svg('g',{'pointer-events':'none'});tag.append(svg('rect',{x:-27,y:h/2+12,width:54,height:12,rx:4,fill:'#ffda75'}),svg('text',{x:0,y:h/2+21,'text-anchor':'middle',fill:'#372900','font-size':8,'font-weight':700},t.funZoneSince?'FunZone '+minutes(t.funZoneSince)+'m':'In FunZone'));group.append(tag);
    group.querySelector('title').textContent+=' · In FunZone';group.setAttribute('aria-label',group.getAttribute('aria-label')+', In FunZone');
   }
   group.addEventListener('click',()=>{if(!group.dataset.dragged)chooseTable(t);});
@@ -380,6 +380,7 @@ function renderSelection(){
   const summary=el('div',{class:'selection-summary'}),capacity=tables.reduce((n,t)=>n+(t.capacity||0),0),unknown=tables.some(t=>!t.capacity);
   summary.append(el('strong',{},tables.map(label).join(' + ')),el('p',{},unknown?'Capacity unconfirmed':`${capacity} seats total`));
   for(const t of tables){const p=state.parties.find(p=>p.id===t.party);summary.append(el('p',{},`${label(t)} · ${names[t.status]}${t.seatedAt?' · '+minutes(t.seatedAt)+' min':''}${p?' · '+p.name+' ('+p.size+')'+(p.highChair?' · High chair':'')+(p.booster?' · Booster':'')+(p.accessibility?' · Accessible seating':'')+(p.childOverride?' · Child override':''):''}`));}box.append(summary);
+  for(const t of tables.filter(t=>t.status==='in_use'&&t.funZone))box.append(el('p',{class:'funzone-summary'},`${label(t)} · Fun Zone${t.funZoneSince?' · '+minutes(t.funZoneSince)+' min':' · Timer starts with the next check-in'} · Table stays in use`));
   if(tables.some(t=>t.roomBlock)){const b=el('button',{class:'primary wide'},'Manage whole-room booking');b.onclick=openRoomBookings;box.append(el('p',{class:'combination-notice'},'These tables belong to a whole-room block.'),b);return;}
   if(!canWrite())return;
   if(tables.every(t=>t.status==='in_use')){const move=el('button',{class:'wide'},'Reassign party');move.onclick=()=>openReassign(tables);box.append(move);}
@@ -558,6 +559,7 @@ $('undo-action').onclick=async()=>{
 
 $('reassign-open').onclick=()=>openReassign(current());
 $('funzone-toggle').onclick=()=>act({type:'funZone',ids:current().map(t=>t.id),active:!current().every(t=>t.funZone)});
+$('funzone-print').onclick=async()=>{if(demo)return toast('Sign in to your restaurant to create its Fun Zone insert.');if(!state.funZoneKey&&!await act({type:'funZoneSetup'}))return;location.href=`/funzone-sign.html?location=${encodeURIComponent(locationId)}`;};
 let reassignmentIds=[];
 function openReassign(tables){
  reassignmentIds=tables.map(t=>t.id);const party=state.parties.find(p=>p.id===tables[0]?.party);

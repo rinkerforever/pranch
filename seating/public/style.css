@@ -266,3 +266,4 @@
 .funzone-toggle{border-color:#b78222;background:#fff4d6;color:#742022;font-weight:700}.funzone-toggle[aria-pressed="true"]{background:#ffe19a}.funzone-badge{filter:drop-shadow(0 1px 1px #0002)}
 
 .focus-primary:has(#funzone-toggle:not([hidden])){display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.focus-primary:has(#funzone-toggle:not([hidden])) button{font-size:13px;padding:7px 4px;min-height:44px}.focus-primary:has(#funzone-toggle:not([hidden])) #seat-now-open{grid-column:1/-1}
+.funzone-summary{color:#784e0a;font-weight:700;margin:10px 0}

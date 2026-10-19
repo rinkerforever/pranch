@@ -177,6 +177,8 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     else{if(!integer(action.diningMinutes,15,180)||!integer(action.cleaningMinutes,0,30))fail('Use 15–180 minutes for dining and 0–30 minutes for cleaning.');state.waitSettings={diningMinutes:action.diningMinutes,cleaningMinutes:action.cleaningMinutes};}
   } else if(type==='presetCombinations') {
     presetCombinations(state,true);
+  } else if(type==='funZoneSetup') {
+    state.funZoneKey ||= uuid()+uuid();
   } else if(type==='guestSettings') {
     if(typeof action.enabled!=='boolean'||!integer(action.maxPartySize,1,30))fail('Choose a maximum party size from 1 to 30.');
     state.guestSettings={enabled:action.enabled,maxPartySize:action.maxPartySize};
@@ -226,7 +228,8 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     const tables=selectedTables(state,action.ids);completeGroups(state,tables);
     if(typeof action.active!=='boolean')fail('Choose whether the family is in FunZone.');
     if(tables.some(t=>t.status!=='in_use'))fail('Only occupied tables can be marked In FunZone.');
-    for(const t of tables)t.funZone=action.active;
+    const since=tables.find(t=>t.funZone&&t.funZoneSince)?.funZoneSince||now;
+    for(const t of tables){t.funZone=action.active;t.funZoneSince=action.active?since:null;}
   } else if(type==='reassign') {
     const from=selectedTables(state,action.fromIds),tables=selectedTables(state,action.ids);
     completeGroups(state,from);
@@ -241,9 +244,9 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     if(includesBoothCombination(tables)&&action.boothAcknowledged!==true)fail('Confirm the booth combination notice before moving.');
     const timing=waitSettings(state);if(protectsBooking(state,tables,now,now+(timing.diningMinutes+timing.cleaningMinutes)*60000))fail('These tables are needed for an upcoming room booking.');
     const seatedAt=party?.seatedAt||from[0].seatedAt||now,group=tables.length>1?uuid():null;
-    const funZone=from.some(t=>t.funZone);
+    const funZone=from.some(t=>t.funZone),funZoneSince=from.find(t=>t.funZone&&t.funZoneSince)?.funZoneSince||null;
     for(const t of from)Object.assign(t,{status:'cleaning',group:null,party:null,seatedAt:null,cleaningAt:now,funZone:false});
-    for(const t of tables)Object.assign(t,{status:'in_use',group,party:party?.id||null,seatedAt,cleaningAt:null,funZone});
+    for(const t of tables)Object.assign(t,{status:'in_use',group,party:party?.id||null,seatedAt,cleaningAt:null,funZone,funZoneSince});
     if(party){party.tables=tables.map(t=>t.id);delete party.childOverride;}
   } else if(type==='combine') {
     const tables=selectedTables(state,action.ids);if(tables.length<2) fail('Select at least two tables.');combineCheck(state,tables,action.combinationOverride===true);
@@ -311,6 +314,7 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
   } else if(type==='background') {
     state.background=action.background;
   } else fail('Unknown action.');
+  for(const t of state.tables)if((t.status!=='in_use'||!t.funZone)&&t.funZoneSince)t.funZoneSince=null;
   state.history.unshift({type,at:now});state.history=state.history.slice(0,100);
   const active=state.parties.filter(p=>['waiting','seated','reserved'].includes(p.status));
   const closed=state.parties.filter(p=>!['waiting','seated','reserved'].includes(p.status)&&now-(p.closedAt||now)<86400000).slice(-200);

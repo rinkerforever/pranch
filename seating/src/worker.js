@@ -1,5 +1,6 @@
 import {presetCombinations} from '../public/combinations.js';
 import {guestApi} from './guest.js';
+import {funzoneApi} from './funzone.js';
 import qrcode from 'qrcode-generator';
 import {deviceSetup} from './device-setup.js';
 import { upgradeNumbering } from '../public/floor.js';
@@ -68,6 +69,7 @@ async function api(request,env,ctx,url){
   const setupMatch=url.pathname.match(/^\/api\/device-setup\/([^/]+)$/);
   if(setupMatch&&request.method==='GET')return json(await deviceSetup(env,decodeURIComponent(setupMatch[1]),url.origin));
   if(url.pathname.startsWith('/api/guest/'))return guestApi(request,env,ctx,url,{json,readBody,cookies,saveState:(id,row,state,requestId)=>saveState(env,id,row,state,{id:'guest-check-in'},requestId)});
+  if(url.pathname.startsWith('/api/funzone/'))return funzoneApi(request,env,url,{json,readBody,saveState:(id,row,state)=>saveState(env,id,row,state,{id:'guest-funzone'})});
   const profile=await identity(request,env,ctx);
   if(url.pathname==='/api/session'){
     const assigned=env.localIdentity?'':' AND EXISTS(SELECT 1 FROM user_location_roles r WHERE r.user_id=g.user_id AND r.location_id=l.id)';
@@ -109,6 +111,12 @@ async function api(request,env,ctx,url){
     return new Response(object.body,{headers:{'content-type':state.background.mime,'cache-control':'private, no-store'}});
   }
   if(resource==='qr'&&request.method==='GET'){
+    if(url.searchParams.get('kind')==='funzone'){
+      const row=await loadState(env,id,profile),state=JSON.parse(row.state_json);
+      if(!state.funZoneKey)throw new AppError('Set up Fun Zone from Guest check-in first.',409);
+      const code=qrcode(0,'M');code.addData(`${env.publicCloudUrl||url.origin}/funzone.html?location=${encodeURIComponent(id)}#key=${state.funZoneKey}`);code.make();
+      return new Response(code.createSvgTag({cellSize:6,margin:24,scalable:true}),{headers:{'content-type':'image/svg+xml','cache-control':'private, no-store'}});
+    }
     const code=qrcode(0,'M');code.addData(`${env.publicCloudUrl||url.origin}/join.html?location=${encodeURIComponent(id)}`);code.make();
     return new Response(code.createSvgTag({cellSize:6,margin:24,scalable:true}),{headers:{'content-type':'image/svg+xml','cache-control':'private, no-store'}});
   }
