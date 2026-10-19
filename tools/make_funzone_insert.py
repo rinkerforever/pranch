@@ -54,7 +54,7 @@ def insert(c):
     text(c,'TYLER  /  EAT. PLAY. REPEAT.',144,366,8,gold,'Helvetica-Bold')
     text(c,'FUN ZONE',146,325,35,red,'Helvetica-Bold');text(c,'FUN ZONE',144,328,35,gold,'Helvetica-Bold')
     text(c,'Heading over to play?',144,306,13,cream,'Helvetica-Bold')
-    arcade(c,24,304,.8);pizza(c,250,341)
+    arcade(c,24,304,.8);pizza(c,250,383)
     for x,y,r,col in [(32,266,8,gold),(257,275,6,pink),(34,190,5,pink),(255,170,7,gold),(39,91,4,gold),(253,64,4,pink)]:star(c,x,y,r,col)
     # QR remains high-contrast, vector, unobstructed, with its quiet zone intact.
     c.setFillColor(HexColor('#FFFFFF'));c.roundRect(69,141,150,150,9,fill=1,stroke=0)

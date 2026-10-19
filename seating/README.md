@@ -55,8 +55,6 @@ The checked-in Wrangler config contains the existing public Supabase URL and pub
 
 After deployment, sign in with an existing system administrator account, select the restaurant, grant staff access, confirm booth capacities, and approve combinations that can physically be joined. All live tables start open and the waiting list starts empty.
 
-## Verification
-
 ## Fun Zone guest QR and 4 × 6 inserts
 
 Select the restaurant, then **Settings → Guest check-in → Fun Zone napkin insert (4 × 6)**. This creates a stable, location-specific QR link and opens the printable insert. Print at actual size with background graphics enabled. The same insert can go on every table in that restaurant. It is separate from waitlist check-in and works even when the waitlist form is closed.
