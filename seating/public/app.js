@@ -181,6 +181,12 @@ function tableSymbol(t){
   }}
   group.append(svg('rect',{x:-w/2-15,y:-h/2-15,width:w+30,height:h+30,rx:7,class:'focus-ring','pointer-events':'all'}));
   if(t.group)group.append(svg('circle',{cx:w/2-2,cy:-h/2+1,r:3,fill:'#3476ba'}));
+  if(t.status==='in_use'&&t.funZone){
+   const badge=svg('g',{class:'funzone-badge',transform:`translate(${w/2+1} ${-h/2-1})`,'pointer-events':'none'});
+   badge.append(svg('circle',{r:11,fill:'#ffe19a',stroke:'#ac750e','stroke-width':1.5}),svg('path',{d:'M-5 -7H5L4 0 6 7H-6L-4 0Z',fill:'#ad2429'}),svg('rect',{x:-3,y:-5,width:6,height:4,rx:1,fill:'#fff5d5'}),svg('path',{d:'M-3 2V4M-4 3H-2M1 3H3',stroke:'#fff5d5','stroke-width':1.3}));group.append(badge);
+   const tag=svg('g',{'pointer-events':'none'});tag.append(svg('rect',{x:-27,y:h/2+12,width:54,height:12,rx:4,fill:'#ffda75'}),svg('text',{x:0,y:h/2+21,'text-anchor':'middle',fill:'#372900','font-size':8,'font-weight':700},'In FunZone'));group.append(tag);
+   group.querySelector('title').textContent+=' · In FunZone';group.setAttribute('aria-label',group.getAttribute('aria-label')+', In FunZone');
+  }
   group.addEventListener('click',()=>{if(!group.dataset.dragged)chooseTable(t);});
   group.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();chooseTable(t);}});
   group.addEventListener('pointerdown',e=>{
@@ -250,6 +256,7 @@ function renderFloor(){
   $('selection-hint').textContent=combining?'Tap open tables, then Review to combine.':selected.size?`${selected.size} table${selected.size===1?'':'s'} selected`:'Tap a table to select it';
   $('plan-note').textContent=state.background?`Uploaded plan: ${state.background.name}. Review seats and table positions in Layout editor.`:'Chair counts follow your PDF. Booth capacities remain unconfirmed until set in Layout editor.';
   $('reassign-open').hidden=!canWrite()||!current().length||current().some(t=>t.status!=='in_use'||t.roomBlock);
+  const away=current().length>0&&current().every(t=>t.funZone);const fun=$('funzone-toggle');fun.hidden=editing||!canWrite()||!current().length||current().some(t=>t.status!=='in_use');fun.textContent=away?'Back from FunZone':'In FunZone';fun.setAttribute('aria-pressed',String(away));
   $('save-layout').disabled=!editing||!tableDraft||busy;
   renderFocusDock();
 }
@@ -550,6 +557,7 @@ $('undo-action').onclick=async()=>{
 };
 
 $('reassign-open').onclick=()=>openReassign(current());
+$('funzone-toggle').onclick=()=>act({type:'funZone',ids:current().map(t=>t.id),active:!current().every(t=>t.funZone)});
 let reassignmentIds=[];
 function openReassign(tables){
  reassignmentIds=tables.map(t=>t.id);const party=state.parties.find(p=>p.id===tables[0]?.party);

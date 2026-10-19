@@ -28,7 +28,7 @@ export function cleaningQueue(state,plan,now=Date.now(),planner){
  }
  return rows.sort((a,b)=>a.started-b.started||a.key.localeCompare(b.key));
 }
-export const undoLabels={reassign:'reassign party',status:'table status',seat:'seat guest',seatNow:'seat walk-in',combine:'combine tables',split:'separate tables',cancelParty:'remove guest',partyContact:'guest attendance',areaAvailability:'section availability'};
+export const undoLabels={funZone:'FunZone marker',reassign:'reassign party',status:'table status',seat:'seat guest',seatNow:'seat walk-in',combine:'combine tables',split:'separate tables',cancelParty:'remove guest',partyContact:'guest attendance',areaAvailability:'section availability'};
 const same=(a,b)=>JSON.stringify(a??null)===JSON.stringify(b??null);
 export function recordUndo(before,after,type,now,id){
  if(!undoLabels[type])return null;
