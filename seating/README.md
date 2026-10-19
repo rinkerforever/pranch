@@ -55,13 +55,17 @@ The checked-in Wrangler config contains the existing public Supabase URL and pub
 
 After deployment, sign in with an existing system administrator account, select the restaurant, grant staff access, confirm booth capacities, and approve combinations that can physically be joined. All live tables start open and the waiting list starts empty.
 
-## Fun Zone guest QR and 4 × 6 inserts
+## Fun Zone guest QR and 3-inch stickers
 
-Select the restaurant, then **Settings → Guest check-in → Fun Zone napkin insert (4 × 6)**. This creates a stable, location-specific QR link and opens the printable insert. Print at actual size with background graphics enabled. The same insert can go on every table in that restaurant. It is separate from waitlist check-in and works even when the waitlist form is closed.
+Select the restaurant, then **Settings → Guest check-in → Fun Zone stickers (3 inch)**. This creates a stable, location-specific QR link and opens a round, 3-inch printable sticker. Print at actual size with background graphics enabled. The same sticker can go on every table in that restaurant. It is separate from waitlist check-in and works even when the waitlist form is closed.
+
+Prepared stickers can be printed before the Pi comes online. Open their supplied activation link while signed in and click **Activate this printed sticker** after the Pi reconnects. Activation uses the normal authority/version checks and will not replace a different existing QR key. The six-up Letter PDF is for full-sheet sticker paper, cut into circles; it is not aligned to a particular brand of precut labels. Its footer links to activation. `tools/make_funzone_stickers.py` builds a single 3-inch sticker and the Letter sheet from the prepared guest URL.
 
 Guests scan, choose their full table number, and tap **We’re in the Fun Zone**. The existing occupied-table FunZone badge shows elapsed minutes. The seating status stays in use; combined tables update together. Guests tap **We’re back at our table**, or staff use the existing return control, to stop the timer. Repeated entry requests preserve the start time. Clearing a table clears the timer; reassignment carries the timer to the new table. A previously opened guest page cannot update a new seating at the same table.
 
 The printed link grants only table Fun Zone updates and does not expose guest names or the waitlist. Treat copies as restaurant guest signage. Guest writes use the same version checks and Pi confirmation as staff writes; an offline paired restaurant refuses public updates. Staff can still use the local app. Older FunZone markers without a timestamp show no invented elapsed duration; the next check-in starts the clock.
+
+## Verification
 
 `node --test tests/*.test.js` verifies PDF seat counts, invalid capacities, authorization, disabled accounts, combination rules, party lifecycle, and competing writes against actual SQLite. Browser QA verifies rendered chair counts and guest/layout flows. Guest notes are rendered as text rather than HTML. Closed guest records are retained up to 24 hours (at most 200), with active parties retained independently.
 

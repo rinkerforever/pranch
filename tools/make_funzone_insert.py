@@ -8,7 +8,8 @@ from reportlab.graphics.shapes import Drawing
 from reportlab.graphics import renderPDF
 
 ROOT=Path(__file__).resolve().parents[1]
-OUT=ROOT/'output'/'pdf'
+draft='--draft' in sys.argv
+OUT=ROOT/('tmp/pdfs' if draft else 'output/pdf')
 OUT.mkdir(parents=True,exist_ok=True)
 url=Path(sys.argv[1]).read_text(encoding='utf-8-sig').strip()
 if not url.startswith('https://seating.projectaimnet.com/funzone.html?location=loc_tyler#key='):
@@ -46,6 +47,7 @@ def pizza(c,x,y):
     c.restoreState()
 
 def insert(c):
+    c.saveState();clip=c.beginPath();clip.rect(0,0,W,H);c.clipPath(clip,stroke=0,fill=0)
     c.setFillColor(HexColor(purple));c.rect(0,0,W,H,fill=1,stroke=0)
     c.setFillColor(HexColor('#482064'));c.circle(-50,180,130,fill=1,stroke=0);c.circle(320,280,110,fill=1,stroke=0)
     c.setStrokeColor(HexColor(gold));c.setLineWidth(2);c.roundRect(9,9,270,414,13,fill=0,stroke=1)
@@ -67,7 +69,11 @@ def insert(c):
     text(c,'Back for another slice?',144,70,11,gold,'Helvetica-Bold')
     text(c,'Tap "We\'re back at our table."',144,55,10)
     text(c,'No app needed. Need help? Ask your host.',144,29,8)
+    if draft:
+        c.setFillColor(HexColor(red));c.rect(0,0,W,17,fill=1,stroke=0)
+        text(c,'DESIGN PREVIEW - QR NOT ACTIVE',144,5,8,'#FFFFFF','Helvetica-Bold')
     c.linkURL(url,(69,141,219,291),relative=1,thickness=0)
+    c.restoreState()
 
 single=OUT/'tyler-fun-zone-insert-4x6.pdf'
 c=canvas.Canvas(str(single),pagesize=(W,H));c.setTitle('Tyler Pizza Ranch - Fun Zone - 4 x 6 inch insert');insert(c);c.showPage();c.save()
@@ -79,5 +85,7 @@ for x in [12,312]:
     for xx in [x,x+W]:
         c.line(xx,173,xx,178);c.line(xx,614,xx,619)
 text(c,'PRINT AT 100% / ACTUAL SIZE  -  CUT EACH INSERT TO 4 x 6 INCHES',306,145,9,'#444444','Helvetica-Bold')
+text(c,'Before first use: click here to activate this insert when Tyler\'s Pi is online.',306,128,9,'#444444')
+c.linkURL(url.replace('/funzone.html?','/funzone-sign.html?').replace('#key=','#activate='),(100,122,512,139),thickness=0)
 c.showPage();c.save()
 print(single);print(sheet)

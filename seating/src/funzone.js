@@ -13,7 +13,8 @@ export async function funzoneApi(request,env,url,{json,readBody,saveState}){
  if(!['GET','POST'].includes(request.method))throw new AppError('Method not allowed.',405);
  const row=await env.DB.prepare('SELECT version,state_json FROM seating_state WHERE location_id=?').bind(id).first();
  const state=row?JSON.parse(row.state_json):null;
- if(!state?.funZoneKey||request.headers.get('x-funzone-key')!==state.funZoneKey)throw new AppError('Scan the Fun Zone QR code at your table.',403);
+ if(!state?.funZoneKey)throw new AppError('Fun Zone check-in is not active yet. Please see your host.',409);
+ if(request.headers.get('x-funzone-key')!==state.funZoneKey)throw new AppError('Scan the Fun Zone QR code at your table.',403);
  const hub=await hubRow(env,id);
  if(env.localIdentity||hub?.enabled&&!hubOnline(hub))throw new AppError(OFFLINE_MESSAGE,503);
  if(request.method==='GET')return json({location:location.name,tables:await Promise.all(state.tables.map(async t=>({id:t.id,label:/^[A-Z]+\d/i.test(t.number)?t.number:`${areaName(state,t.area)}-${t.number}`,visit:await visitKey(state.funZoneKey,t)})))});

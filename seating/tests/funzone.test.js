@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {initialState,applyAction} from '../src/model.js';
 const now=1800000000000,run=(s,a)=>applyAction(s,a,'host',now);
+test('a prepared insert key activates once and cannot replace an existing printed QR',()=>{
+ const key='a'.repeat(64),setup={type:'funZoneSetup',key};
+ const s=run(initialState(),setup);assert.equal(s.funZoneKey,key);assert.equal(run(s,setup).funZoneKey,key);
+ assert.throws(()=>run(s,{type:'funZoneSetup',key:'b'.repeat(64)}),/already active/);
+ assert.throws(()=>run(initialState(),{type:'funZoneSetup',key:'bad'}),/Invalid/);
+ assert.throws(()=>applyAction(initialState(),setup,'viewer'),/view-only/);
+});
 test('Fun Zone timestamps survive repeat check-ins and reassignment, stop on return and reset for the next trip',()=>{
  let s=run(initialState(),{type:'seatNow',size:4,ids:['B-70']});
  const enter={type:'funZone',ids:['B-70'],active:true};

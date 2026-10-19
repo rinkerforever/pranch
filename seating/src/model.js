@@ -178,7 +178,9 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
   } else if(type==='presetCombinations') {
     presetCombinations(state,true);
   } else if(type==='funZoneSetup') {
-    state.funZoneKey ||= uuid()+uuid();
+    if(action.key!==undefined&&(typeof action.key!=='string'||!/^[a-f0-9]{64}$/.test(action.key)))fail('Invalid printed insert key.');
+    if(action.key&&state.funZoneKey&&state.funZoneKey!==action.key)fail('Another Fun Zone insert is already active. Print that insert instead.');
+    state.funZoneKey ||= action.key||uuid()+uuid();
   } else if(type==='guestSettings') {
     if(typeof action.enabled!=='boolean'||!integer(action.maxPartySize,1,30))fail('Choose a maximum party size from 1 to 30.');
     state.guestSettings={enabled:action.enabled,maxPartySize:action.maxPartySize};
