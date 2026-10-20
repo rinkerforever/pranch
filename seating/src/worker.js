@@ -114,7 +114,9 @@ async function api(request,env,ctx,url){
     if(url.searchParams.get('kind')==='funzone'){
       const row=await loadState(env,id,profile),state=JSON.parse(row.state_json);
       if(!state.funZoneKey)throw new AppError('Set up Fun Zone from Guest check-in first.',409);
-      const code=qrcode(0,'M');code.addData(`${env.publicCloudUrl||url.origin}/funzone.html?location=${encodeURIComponent(id)}#key=${state.funZoneKey}`);code.make();
+      const table=url.searchParams.get('table');
+      if(table&&!state.tables.some(t=>t.id===table))throw new AppError('Table not found.',404);
+      const code=qrcode(0,'M');code.addData(`${env.publicCloudUrl||url.origin}/funzone.html?location=${encodeURIComponent(id)}${table?'&table='+encodeURIComponent(table):''}#key=${state.funZoneKey}`);code.make();
       return new Response(code.createSvgTag({cellSize:6,margin:24,scalable:true}),{headers:{'content-type':'image/svg+xml','cache-control':'private, no-store'}});
     }
     const code=qrcode(0,'M');code.addData(`${env.publicCloudUrl||url.origin}/join.html?location=${encodeURIComponent(id)}`);code.make();

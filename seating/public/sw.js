@@ -1,5 +1,5 @@
 // Static files only. Never cache API responses, floor plans, PINs or guest records.
-const CACHE='seating-shell-6363e2e63483';
+const CACHE='seating-shell-c5365341056d';
 const ASSETS=['/','/index.html','/style.css','/app.js','/floor.js','/areas.js','/rooms.js','/plan-cleanup.js','/area-manager.js','/floor-import.js','/plan-detection.js','/combinations.js','/suggestions.js','/wait-plan.js','/ready-alert.js','/device.js','/manifest.webmanifest','/app-icon.svg','/apple-touch-icon.png'];
 ASSETS.push('/plan-fit.js','/render-cache.js','/service-ops.js','/reports.js','/dining-progress.js');
 ASSETS.push('/accessibility.js');
