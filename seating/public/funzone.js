@@ -7,6 +7,6 @@ async function update(action){if(busy||!current)return;busy=true;$('table').disa
 $('form').onsubmit=e=>{e.preventDefault();current=tables.find(t=>t.id===$('table').value);update('enter');};
 $('back').onclick=()=>update('back');
 $('table').onchange=()=>{current=null;since=null;$('status').hidden=true;$('error').textContent='';};
-try{if(!id||!key)throw new Error('Please scan the Fun Zone QR code at your table.');const data=await api();tables=data.tables;$('restaurant').textContent=data.location;$('table').replaceChildren(new Option('Choose your table…',''),...tables.map(t=>new Option(t.label,t.id)));$('enter').disabled=false;}catch(e){$('error').textContent=e.message;}
+try{if(!id||!key)throw new Error('Please scan the Fun Zone QR code at your table.');const data=await api();tables=data.tables;$('restaurant').textContent=data.location;$('table').replaceChildren(new Option('Choose your table…',''),...tables.map(t=>new Option(t.label,t.id)));const printedTable=params.get('table');if(printedTable){if(!tables.some(t=>t.id===printedTable))throw new Error('This printed table is no longer on the seating chart. Please ask your host.');$('table').value=printedTable;}$('enter').disabled=false;}catch(e){$('error').textContent=e.message;}
 setInterval(tick,1000);
 setInterval(async()=>{if(!current||busy||document.hidden)return;const visit=current;try{const data=await api({table:visit.id,visit:visit.visit,action:'status'});if(current===visit&&!busy)show(data);}catch(e){if(current!==visit||busy)return;$('error').textContent=e.message;}},10000);
