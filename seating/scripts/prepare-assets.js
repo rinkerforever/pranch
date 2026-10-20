@@ -9,7 +9,7 @@ await writeFile(new URL('../public/model.js', import.meta.url), model.replaceAll
 const assets=['app.js','style.css','floor.js','areas.js','rooms.js','plan-cleanup.js','area-manager.js','floor-import.js','plan-detection.js','combinations.js','suggestions.js','wait-plan.js','ready-alert.js','device.js','ipad-setup.html','ipad-setup.js','ipad-setup.css','setup-platform.js','index.html','manifest.webmanifest','app-icon.svg'];
 assets.push('plan-fit.js','render-cache.js','service-ops.js','reports.js','dining-progress.js');
 assets.push('accessibility.js','guest.js','join.html');
-assets.push('connection-indicator.js','wait-forecast.js');
+assets.push('connection-indicator.js','wait-forecast.js','adaptive-sync.js');
 assets.push('funzone.html','funzone.js','funzone.css','funzone-sign.html','funzone-sign.js');
 const hash=createHash('sha256');for(const name of assets)hash.update(await readFile(new URL('../public/'+name,import.meta.url)));
 const template=await readFile(new URL('../public/sw.js',import.meta.url),'utf8');
