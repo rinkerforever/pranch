@@ -241,6 +241,48 @@ test('concurrent duplicate submissions create one party and private status expos
  assert.equal((await guestCall(f,{token,body:{action:'cancel'}})).status,200);
  assert.equal((await(await guestCall(f,{token})).json()).party.status,'cancelled');f.sqlite.close();
 });
+test('name and size lookup claims staff-added parties and size changes preserve arrival and needs',async t=>{
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
+ const f=fixture();t.after(()=>f.sqlite.close());await openGuestCheckin(f);
+ const action=async action=>{const s=await(await f.call('/api/locations/loc/state')).json();return f.call('/api/locations/loc/actions',{version:s.version,action});};
+ await action({type:'addParty',name:'Smith Family',size:4,notes:'Private note',highChair:true,accessibility:true});
+ let s=await(await f.call('/api/locations/loc/state')).json(),party=s.state.parties[0];const arrival=party.arrivedAt;
+ await action({type:'readyParty',id:party.id});
+ const token=(await guestCall(f)).headers.get('set-cookie').split(';')[0];
+ assert.equal((await guestCall(f,{token,body:{action:'resize',size:6}})).status,409);
+ assert.equal((await guestCall(f,{token,body:{action:'lookup',name:'Smith Family',size:3}})).status,404);
+ const found=await guestCall(f,{token,body:{action:'lookup',name:'  smith   family ',size:4}});assert.equal(found.status,200);assert.equal((await found.json()).party.ready,true);
+ assert.equal((await guestCall(f,{token,body:{action:'resize',size:9}})).status,400);
+ assert.equal((await guestCall(f,{token,body:{action:'resize',size:6}})).status,200);
+ s=await(await f.call('/api/locations/loc/state')).json();party=s.state.parties[0];assert.equal(party.size,6);assert.equal(party.arrivedAt,arrival);assert.equal(party.notes,'Private note');assert.equal(party.highChair,true);assert.equal(party.accessibility,true);assert.equal(party.readyAt,undefined);assert.equal(party.previousGuestSize,4);assert.ok(party.guestSizeChangedAt);
+ const status=await(await guestCall(f,{token})).json();assert.equal(status.party.size,6);assert.ok(!JSON.stringify(status).includes('Private note'));assert.ok(!JSON.stringify(status).includes('guestClaimHashes'));
+ await action({type:'cancelParty',id:party.id});assert.equal((await guestCall(f,{token,body:{action:'resize',size:5}})).status,409);
+});
+
+test('lookup rejects ambiguous matches, rate limits failures, and works when new check-in is closed',async t=>{
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
+ const f=fixture();t.after(()=>f.sqlite.close());await openGuestCheckin(f);
+ const action=async action=>{const s=await(await f.call('/api/locations/loc/state')).json();return f.call('/api/locations/loc/actions',{version:s.version,action});};
+ await action({type:'addParty',name:'Smith',size:4});await action({type:'addParty',name:'Smith',size:4});
+ const token=(await guestCall(f)).headers.get('set-cookie').split(';')[0];
+ assert.equal((await guestCall(f,{token,body:{action:'lookup',name:'Smith',size:4}})).status,404);
+ for(let i=0;i<9;i++)assert.equal((await guestCall(f,{token,body:{action:'lookup',name:'Missing',size:4}})).status,404);
+ assert.equal((await guestCall(f,{token,body:{action:'lookup',name:'Missing',size:4}})).status,429);
+ const s=await(await f.call('/api/locations/loc/state')).json();s.state.guestLookups=[];s.state.parties.pop();f.sqlite.prepare('UPDATE seating_state SET state_json=? WHERE location_id=?').run(JSON.stringify(s.state),'loc');
+ await action({type:'guestSettings',enabled:false,maxPartySize:8});assert.equal((await guestCall(f,{token,body:{action:'lookup',name:'Smith',size:4}})).status,200);
+ assert.equal((await guestCall(f,{token,body:{action:'resize',size:5}})).status,200);
+ f.sqlite.exec("INSERT INTO seating_hubs(location_id,enabled,token_hash,last_seen,local_url,created_by) VALUES('loc',1,'test',0,'https://pi.test','admin')");assert.equal((await guestCall(f,{token,body:{action:'resize',size:6}})).status,503);
+});
+
+test('room setup QR codes require manager access, enabled add-on and a valid room',async t=>{
+ t.mock.method(globalThis,'fetch',async(url,options)=>new Response(JSON.stringify({id:options.headers.authorization==='Bearer viewer'?'auth-viewer':'auth-admin'})));
+ const f=fixture();t.after(()=>f.sqlite.close());const path='/api/locations/loc/qr?kind=party-display&room=rose';
+ assert.equal((await f.call(path)).status,409);assert.equal((await f.call(path,null,'viewer')).status,403);
+ const s=await(await f.call('/api/locations/loc/state')).json();await f.call('/api/locations/loc/actions',{version:s.version,action:{type:'partyDisplaySettings',enabled:true}});
+ const qr=await f.call(path);assert.equal(qr.status,200);assert.equal(qr.headers.get('cache-control'),'private, no-store');assert.match(await qr.text(),/<svg/);
+ assert.equal((await f.call('/api/locations/loc/qr?kind=party-display&room=missing')).status,404);
+});
+
 test('closed check-in still serves private status; QR images require staff access',async t=>{
  t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
  const f=fixture();await openGuestCheckin(f);const first=await guestCall(f),token=first.headers.get('set-cookie').split(';')[0];await guestCall(f,{token,body:guestJoin});

@@ -335,6 +335,7 @@ function renderWaitlistView(){
   const forecast=guestForecast(p,estimate,now),row=el('tr',{class:`${estimate?.ready?'ready-row ':''}${forecast.pastEstimate?'past-estimate-row':''}`}),guest=el('td'),wait=el('td'),eta=el('td'),table=el('td'),action=el('td');
   wait.append(el('strong',{},`${forecast.waitedMinutes} min`),el('small',{},`Arrived ${forecastTime(p.arrivedAt)}`));
   guest.append(el('strong',{},`${i+1}. ${p.name}`),el('small',{},`${p.size} guests${p.highChair?' · High chair':''}${p.booster?' · Booster':''}`));
+  if(p.guestSizeChangedAt)guest.append(el('small',{},`Guest updated size: ${p.previousGuestSize} → ${p.size} · ${forecastTime(p.guestSizeChangedAt)}`));
   if(p.attendance==='away')guest.append(el('strong',{class:'attendance-note'},`Not present · ${minutes(p.awayAt)} min`));
   else if(p.calledAt)guest.append(el('strong',{class:'attendance-note'},`Called ${minutes(p.calledAt)} min ago`));
   if(p.accessibility)guest.append(el('small',{},'Accessibility-preferred seating'));

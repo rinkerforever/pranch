@@ -2,6 +2,7 @@ import {presetCombinations} from '../public/combinations.js';
 import {guestApi} from './guest.js';
 import {funzoneApi} from './funzone.js';
 import {partyDisplayApi} from './party-display.js';
+import {partyDisplayUrl} from '../public/party-display-addon.js';
 import qrcode from 'qrcode-generator';
 import {deviceSetup} from './device-setup.js';
 import { upgradeNumbering } from '../public/floor.js';
@@ -127,6 +128,15 @@ async function api(request,env,ctx,url){
     return new Response(object.body,{headers:{'content-type':state.background.mime,'cache-control':'private, no-store'}});
   }
   if(resource==='qr'&&request.method==='GET'){
+    if(url.searchParams.get('kind')==='party-display'){
+      if(!['admin','manager'].includes(role))throw new AppError('Manager access required.',403);
+      const row=await loadState(env,id,profile),state=JSON.parse(row.state_json),room=url.searchParams.get('room');
+      const {roomOptions}=await import('../public/areas.js');
+      if(!roomOptions(state).some(r=>r.id===room))throw new AppError('Room not found.',404);
+      const link=partyDisplayUrl(state,id,room);if(!link)throw new AppError('Enable Party Display first.',409);
+      const code=qrcode(0,'M');code.addData(link);code.make();
+      return new Response(code.createSvgTag({cellSize:6,margin:24,scalable:true}),{headers:{'content-type':'image/svg+xml','cache-control':'private, no-store'}});
+    }
     if(url.searchParams.get('kind')==='funzone'){
       const row=await loadState(env,id,profile),state=JSON.parse(row.state_json);
       if(!state.funZoneKey)throw new AppError('Set up Fun Zone from Guest check-in first.',409);

@@ -79,6 +79,10 @@ The printed link grants only table Fun Zone updates and does not expose guest na
 - API authorization and concurrency tests are automated; final end-to-end login with a real administrator must be verified after deployment.
 # Party room tablet display
 
+Managers can scan a room-specific setup QR code from **Settings → Party Display add-on** with each tablet's camera. These codes contain the same private display link as the room's Open link and are available only while the add-on is enabled.
+
+The existing guest waitlist QR now offers **Find my party** using an exact name match (ignoring case and repeated spaces) plus current party size. Ambiguous matches go to the host; lookups are limited to recent active parties and rate limited. This deliberately uses lightweight verification rather than a private code. A matched guest can update their waiting party's size up to the configured guest limit, including when new online check-ins are closed. Arrival time and seating needs are retained, readiness is cleared, and staff see the size change. Seated/reserved parties must ask staff to resize. The same browser remembers the matched party.
+
 Managers enable **Settings → Party Display add-on** per restaurant (off by default). Open one of its room links on each tablet. Enabled rooms also have an **Open tablet display** link under Whole-room bookings. Production links use `https://partydisplay.projectaimnet.com/`; the same Worker serves this custom domain and routes its root to the display. A preview is available at `/room-display.html?demo=1`.
 
 The screen shows the earliest upcoming reservation (including its date, party name and start/end times), counts down during the scheduled interval, then advances to the next reservation or the room's configured Open/Closed state. Combined bookings appear on each affected room. Reservation status takes priority over closure. Time labels use the tablet's timezone, so configure the tablet for the restaurant's timezone.

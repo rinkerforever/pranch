@@ -2,7 +2,7 @@ import {AppError,applyAction} from './model.js';
 import {hubRow,hubOnline,OFFLINE_MESSAGE} from './hub.js';
 const hash=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),b=>b.toString(16).padStart(2,'0')).join('');
 const settings=state=>({enabled:state?.guestSettings?.enabled===true,maxPartySize:state?.guestSettings?.maxPartySize||12});
-function ownParty(state,tokenHash){return state?.parties?.filter(p=>p.guestTokenHash===tokenHash).sort((a,b)=>b.arrivedAt-a.arrivedAt)[0]||null;}
+function ownParty(state,tokenHash){return state?.parties?.filter(p=>p.guestTokenHash===tokenHash||p.guestClaimHashes?.includes(tokenHash)).sort((a,b)=>b.arrivedAt-a.arrivedAt)[0]||null;}
 function visibleParty(p){return p?{name:p.name,size:p.size,status:p.status,ready:!!p.readyAt,arrivedAt:p.arrivedAt}:null;}
 export async function guestApi(request,env,ctx,url,{json,readBody,cookies,saveState}){
  const match=url.pathname.match(/^\/api\/guest\/([^/]+)$/);if(!match)throw new AppError('Not found.',404);
@@ -27,8 +27,24 @@ export async function guestApi(request,env,ctx,url,{json,readBody,cookies,saveSt
    const hub=await hubRow(env,id),offline=!!env.localIdentity||!!hub?.enabled&&!hubOnline(hub);
    if(request.method==='GET')return json({location:location.name,...config,enabled:config.enabled&&!offline,offline,message:offline?OFFLINE_MESSAGE:null,party:visibleParty(own)});
    if(!state)throw new AppError('Online check-in is closed. Please see the host.',409);
-   const now=Date.now();
-   if(body.action==='cancel'){
+   const now=Date.now();let lookupError=null;
+   if(offline)throw new AppError(OFFLINE_MESSAGE,503);
+   if(body.action==='lookup'){
+     if(typeof body.name!=='string'||!body.name.trim()||body.name.length>80||!Number.isInteger(body.size)||body.size<1||body.size>100)throw new AppError('Enter your party name and current party size.');
+     if(own&&['waiting','reserved','seated'].includes(own.status))return json({party:visibleParty(own),alreadyJoined:true});
+     const ipHash=await hash(id+':lookup:'+(request.headers.get('CF-Connecting-IP')||'local'));
+     const recent=(state.guestLookups||[]).filter(j=>now-j.at<600000);
+     if(recent.filter(j=>j.ipHash===ipHash).length>=10||recent.length>=200)throw new AppError('Too many lookups. Please ask the host for help.',429);
+     state.guestLookups=[...recent,{ipHash,at:now}];
+     const normalize=s=>s.trim().replace(/\s+/g,' ').toLocaleLowerCase('en-US');
+     const matches=state.parties.filter(p=>['waiting','reserved','seated'].includes(p.status)&&p.arrivedAt>=now-86400000&&normalize(p.name)===normalize(body.name)&&p.size===body.size);
+     if(matches.length!==1)lookupError='We could not uniquely match your party. Check the name and current size, or ask the host.';
+     else{const party=matches[0];party.guestClaimHashes=[...new Set([...(party.guestClaimHashes||[]),tokenHash])].slice(-5);}
+   }else if(body.action==='resize'){
+     if(!own||own.status!=='waiting')throw new AppError('Only waiting parties can change size here. Please see the host.',409);
+     if(!Number.isInteger(body.size)||body.size<1||body.size>config.maxPartySize)throw new AppError(`Enter a party size from 1 to ${config.maxPartySize}. For larger groups, see the host.`);
+     if(body.size!==own.size){state=applyAction(state,{type:'editParty',id:own.id,name:own.name,size:body.size,notes:own.notes},'host',now);const updated=state.parties.find(p=>p.id===own.id);delete updated.readyAt;delete updated.calledAt;updated.guestSizeChangedAt=now;updated.previousGuestSize=own.size;}
+   }else if(body.action==='cancel'){
      if(!own||own.status!=='waiting')throw new AppError('This party is no longer waiting.',409);
      state=applyAction(state,{type:'cancelParty',id:own.id},'host',now);
    }else if(body.action==='join'){
@@ -47,10 +63,11 @@ export async function guestApi(request,env,ctx,url,{json,readBody,cookies,saveSt
    }else throw new AppError('Invalid request.');
    if(hub?.enabled){
      const response=await saveState(id,row,state),result=await response.json();
+     if(lookupError)throw new AppError(lookupError,404);
      return json({party:visibleParty(ownParty(result.state,tokenHash))});
    }
    const result=await env.DB.prepare("UPDATE seating_state SET state_json=?,version=version+1,updated_by=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE location_id=? AND version=? AND NOT EXISTS(SELECT 1 FROM seating_hubs WHERE location_id=? AND enabled=1)").bind(JSON.stringify(state),'guest-check-in',id,row.version,id).run();
-   if(result.meta.changes===1)return json({party:visibleParty(ownParty(state,tokenHash))});
+   if(result.meta.changes===1){if(lookupError)throw new AppError(lookupError,404);return json({party:visibleParty(ownParty(state,tokenHash))});}
  }
  throw new AppError('The host is updating the list. Please try again.',409);
 }
