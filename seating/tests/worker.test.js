@@ -234,12 +234,12 @@ test('concurrent duplicate submissions create one party and private status expos
  let staff=await(await f.call('/api/locations/loc/state')).json();assert.equal(staff.state.parties.length,1);assert.equal(staff.state.parties[0].source,'qr');assert.ok(staff.state.parties[0].waitQuote.latestAt>=staff.state.parties[0].arrivedAt);assert.equal(staff.state.parties[0].highChair,true);assert.equal(staff.state.parties[0].booster,true);assert.equal(staff.state.parties[0].accessibility,true);
  const second=await guestCall(f),otherToken=second.headers.get('set-cookie').split(';')[0];assert.equal((await second.json()).party,null);
  assert.equal((await guestCall(f,{token:otherToken,body:guestJoin})).status,429);
- const publicData=await(await guestCall(f,{token})).json();assert.deepEqual(Object.keys(publicData.party).sort(),['arrivedAt','name','ready','size','status']);assert.ok(!JSON.stringify(publicData).includes('guestTokenHash'));assert.ok(!JSON.stringify(publicData).includes('High chair'));
+ const publicData=await(await guestCall(f,{token})).json();assert.deepEqual(Object.keys(publicData.party).sort(),['arrivedAt','name','paused','position','ready','size','status','wait']);assert.ok(!JSON.stringify(publicData).includes('guestTokenHash'));assert.ok(!JSON.stringify(publicData).includes('High chair'));
  await f.call('/api/locations/loc/actions',{version:staff.version,action:{type:'readyParty',id:staff.state.parties[0].id}});
  assert.equal((await(await guestCall(f,{token})).json()).party.ready,true);
  assert.equal((await guestCall(f,{token:otherToken,body:{action:'cancel'}})).status,409);
  assert.equal((await guestCall(f,{token,body:{action:'cancel'}})).status,200);
- assert.equal((await(await guestCall(f,{token})).json()).party.status,'cancelled');f.sqlite.close();
+ assert.equal((await(await guestCall(f,{token})).json()).party,null);f.sqlite.close();
 });
 test('name and size lookup claims staff-added parties and size changes preserve arrival and needs',async t=>{
  t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
@@ -281,6 +281,25 @@ test('room setup QR codes require manager access, enabled add-on and a valid roo
  const s=await(await f.call('/api/locations/loc/state')).json();await f.call('/api/locations/loc/actions',{version:s.version,action:{type:'partyDisplaySettings',enabled:true}});
  const qr=await f.call(path);assert.equal(qr.status,200);assert.equal(qr.headers.get('cache-control'),'private, no-store');assert.match(await qr.text(),/<svg/);
  assert.equal((await f.call('/api/locations/loc/qr?kind=party-display&room=missing')).status,404);
+});
+
+test('guest sees remaining wait, arrival position and host call; leaving clears the card',async t=>{
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
+ const f=fixture();t.after(()=>f.sqlite.close());await openGuestCheckin(f);
+ const action=async action=>{const s=await(await f.call('/api/locations/loc/state')).json();return f.call('/api/locations/loc/actions',{version:s.version,action});};
+ await action({type:'addParty',name:'Ahead',size:2});
+ const token=(await guestCall(f)).headers.get('set-cookie').split(';')[0];await guestCall(f,{token,body:guestJoin});
+ let status=(await(await guestCall(f,{token})).json()).party;assert.equal(status.position,2);assert.equal(status.ready,false);assert.ok(status.wait);assert.ok(status.wait.upper>=status.wait.lower);
+ const s=await(await f.call('/api/locations/loc/state')).json(),own=s.state.parties.find(p=>p.name==='Guest One'),ahead=s.state.parties.find(p=>p.name==='Ahead');
+ await action({type:'cancelParty',id:ahead.id});assert.equal((await(await guestCall(f,{token})).json()).party.position,1);
+ await action({type:'partyContact',id:own.id,contact:'called'});assert.equal((await(await guestCall(f,{token})).json()).party.ready,true);
+ await action({type:'partyContact',id:own.id,contact:'away'});status=(await(await guestCall(f,{token})).json()).party;assert.equal(status.ready,false);assert.equal(status.paused,true);assert.equal(status.wait,null);
+ await action({type:'partyContact',id:own.id,contact:'waiting'});assert.equal((await(await guestCall(f,{token})).json()).party.ready,false);
+ await guestCall(f,{token,body:{action:'cancel'}});assert.equal((await(await guestCall(f,{token})).json()).party,null);
+});
+
+test('guest join form appears before existing-party lookup',()=>{
+ const html=readFileSync(new URL('../public/join.html',import.meta.url),'utf8');assert.ok(html.indexOf('id="join-form"')<html.indexOf('id="lookup-form"'));assert.match(html,/id="wait-summary"/);
 });
 
 test('closed check-in still serves private status; QR images require staff access',async t=>{

@@ -1,9 +1,19 @@
 import {AppError,applyAction} from './model.js';
 import {hubRow,hubOnline,OFFLINE_MESSAGE} from './hub.js';
+import {planWaitlist} from '../public/wait-plan.js';
+import {forecastWindow} from '../public/wait-forecast.js';
 const hash=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),b=>b.toString(16).padStart(2,'0')).join('');
 const settings=state=>({enabled:state?.guestSettings?.enabled===true,maxPartySize:state?.guestSettings?.maxPartySize||12});
 function ownParty(state,tokenHash){return state?.parties?.filter(p=>p.guestTokenHash===tokenHash||p.guestClaimHashes?.includes(tokenHash)).sort((a,b)=>b.arrivedAt-a.arrivedAt)[0]||null;}
-function visibleParty(p){return p?{name:p.name,size:p.size,status:p.status,ready:!!p.readyAt,arrivedAt:p.arrivedAt}:null;}
+function visibleParty(p){return p&&['waiting','reserved','seated'].includes(p.status)?{name:p.name,size:p.size,status:p.status,ready:p.status==='waiting'&&p.attendance!=='away'&&!!(p.readyAt||p.calledAt),arrivedAt:p.arrivedAt}:null;}
+function guestStatus(state,p,offline){
+ const party=visibleParty(p);if(!party||p.status!=='waiting')return party;
+ const queue=state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt||a.id.localeCompare(b.id));
+ const paused=p.attendance==='away';
+ const estimate=!offline&&!paused?planWaitlist(state).rows.find(r=>r.party.id===p.id)?.estimate:null;
+ const window=forecastWindow(estimate);
+ return {...party,ready:!offline&&party.ready,position:offline?null:queue.findIndex(item=>item.id===p.id)+1,paused,wait:window?{lower:window.lower,upper:window.upper}:null};
+}
 export async function guestApi(request,env,ctx,url,{json,readBody,cookies,saveState}){
  const match=url.pathname.match(/^\/api\/guest\/([^/]+)$/);if(!match)throw new AppError('Not found.',404);
  const id=decodeURIComponent(match[1]);
@@ -25,7 +35,7 @@ export async function guestApi(request,env,ctx,url,{json,readBody,cookies,saveSt
    let state=row?JSON.parse(row.state_json):null;
    const config=settings(state),own=ownParty(state,tokenHash);
    const hub=await hubRow(env,id),offline=!!env.localIdentity||!!hub?.enabled&&!hubOnline(hub);
-   if(request.method==='GET')return json({location:location.name,...config,enabled:config.enabled&&!offline,offline,message:offline?OFFLINE_MESSAGE:null,party:visibleParty(own)});
+   if(request.method==='GET')return json({location:location.name,...config,enabled:config.enabled&&!offline,offline,message:offline?OFFLINE_MESSAGE:null,party:guestStatus(state,own,offline)});
    if(!state)throw new AppError('Online check-in is closed. Please see the host.',409);
    const now=Date.now();let lookupError=null;
    if(offline)throw new AppError(OFFLINE_MESSAGE,503);

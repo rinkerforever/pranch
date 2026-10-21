@@ -12,6 +12,10 @@ function render(data){
  $('new-size').max=data.maxPartySize;
  if(p&&document.activeElement!==$('new-size'))$('new-size').value=p.size;
  $('size').max=data.maxPartySize;$('cancel').hidden=!p||p.status!=='waiting';
+ $('wait-summary').hidden=!p||p.status!=='waiting';
+ $('queue-position').textContent=p?.position?`Your place in line: #${p.position}`:'';
+ $('wait-estimate').textContent=data.offline?'Wait estimate temporarily unavailable':p?.ready?'Your table is ready — please return to the host.':p?.paused?'Your wait is paused. Please check in with the host.':p?.wait?`Estimated remaining wait: ${p.wait.lower}–${p.wait.upper} minutes`:'Please ask the host for a wait estimate.';
+ if(!p)$('size-confirmation').textContent='';
  if(p){$('party-name').textContent=p.name;$('party-size').textContent=`Party of ${p.size}`;$('party').classList.toggle('ready',p.ready&&p.status==='waiting');$('guidance').textContent=p.status==='waiting'?(p.ready?'Please return to the host stand now.':'Please stay nearby. This page checks for updates automatically.'):p.status==='reserved'?'Please check with the host when your group arrives.':p.status==='seated'?'Your party has been seated.':p.status==='cancelled'?'Your party has left the waitlist.':'Your visit is complete. Thank you!';}
  $('updated').textContent='Updated '+new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
 }
@@ -21,4 +25,4 @@ $('resize-form').onsubmit=async e=>{e.preventDefault();if(sending)return;sending
 $('join-form').onsubmit=async e=>{e.preventDefault();if(sending)return;sending=true;$('join-button').disabled=true;try{await request({action:'join',name:$('name').value.trim(),size:Number($('size').value),notes:$('notes').value.trim(),highChair:$('highchair').checked,booster:$('booster').checked,accessibility:$('accessibility').checked,website:$('website').value});render(await request());}catch(e){$('error').textContent=e.message;}finally{sending=false;$('join-button').disabled=false;}};
 $('cancel').onclick=async()=>{if(sending||!confirm('Leave the waitlist?'))return;sending=true;$('cancel').disabled=true;try{await request({action:'cancel'});render(await request());}catch(e){$('error').textContent=e.message;}finally{sending=false;$('cancel').disabled=false;}};
 $('refresh').onclick=refresh;if(id)refresh();else{$('message').textContent='Please scan the restaurant’s QR code or ask the host for a check-in link.';$('refresh').hidden=true;}
-setInterval(()=>{if(id&&!document.hidden&&!visitFinished)refresh();},15000);document.addEventListener('visibilitychange',()=>{if(id&&!document.hidden&&!visitFinished)refresh();});
+setInterval(()=>{if(id&&!document.hidden&&!visitFinished)refresh();},5000);document.addEventListener('visibilitychange',()=>{if(id&&!document.hidden)refresh();});
