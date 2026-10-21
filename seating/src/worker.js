@@ -1,6 +1,7 @@
 import {presetCombinations} from '../public/combinations.js';
 import {guestApi} from './guest.js';
 import {funzoneApi} from './funzone.js';
+import {partyDisplayApi} from './party-display.js';
 import qrcode from 'qrcode-generator';
 import {deviceSetup} from './device-setup.js';
 import { upgradeNumbering } from '../public/floor.js';
@@ -70,7 +71,22 @@ async function api(request,env,ctx,url){
   if(setupMatch&&request.method==='GET')return json(await deviceSetup(env,decodeURIComponent(setupMatch[1]),url.origin));
   if(url.pathname.startsWith('/api/guest/'))return guestApi(request,env,ctx,url,{json,readBody,cookies,saveState:(id,row,state,requestId)=>saveState(env,id,row,state,{id:'guest-check-in'},requestId)});
   if(url.pathname.startsWith('/api/funzone/'))return funzoneApi(request,env,url,{json,readBody,saveState:(id,row,state)=>saveState(env,id,row,state,{id:'guest-funzone'})});
+  if(url.pathname.startsWith('/api/party-display/'))return partyDisplayApi(request,env,url,json);
   const profile=await identity(request,env,ctx);
+  if(url.pathname==='/api/stores'){
+    if(!profile.system_admin)throw new AppError('System administrator access required.',403);
+    if(env.localIdentity)throw new AppError('Manage stores through the online seating app.',403);
+    if(request.method==='GET')return json({stores:(await env.DB.prepare('SELECT id,name,active FROM locations ORDER BY name').all()).results});
+    if(request.method==='POST'){
+      const body=await readBody(request);
+      if(typeof body.id!=='string'||typeof body.active!=='boolean')throw new AppError('Choose a store and its active setting.');
+      const store=await env.DB.prepare('SELECT id,name FROM locations WHERE id=?').bind(body.id).first();
+      if(!store)throw new AppError('Store not found.',404);
+      await env.DB.prepare('UPDATE locations SET active=? WHERE id=?').bind(body.active?1:0,body.id).run();
+      return json({ok:true});
+    }
+    throw new AppError('Method not allowed.',405);
+  }
   if(url.pathname==='/api/session'){
     const assigned=env.localIdentity?'':' AND EXISTS(SELECT 1 FROM user_location_roles r WHERE r.user_id=g.user_id AND r.location_id=l.id)';
     const rows=profile.system_admin?await env.DB.prepare("SELECT id,name,'admin' AS role FROM locations WHERE active=1 ORDER BY name").all():await env.DB.prepare(`SELECT l.id,l.name,g.role FROM locations l JOIN seating_grants g ON g.location_id=l.id WHERE l.active=1 AND g.user_id=?${assigned} ORDER BY l.name`).bind(profile.id).all();
@@ -161,7 +177,9 @@ export default {
     try{
       const url=new URL(request.url);
       if(url.pathname.startsWith('/api/'))response=await api(request,env,ctx,url);
-      else response=await env.ASSETS.fetch(request);
+      else if(url.hostname==='partydisplay.projectaimnet.com'&&url.pathname==='/'){
+        url.pathname='/room-display.html';response=await env.ASSETS.fetch(new Request(url,request));
+      }else response=await env.ASSETS.fetch(request);
     }catch(error){
       if(!(error instanceof AppError))console.error('Seating request failed',error.message);
       response=json({error:error instanceof AppError?error.message:'Service temporarily unavailable. Please retry.'},error.status||503);

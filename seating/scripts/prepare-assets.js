@@ -10,6 +10,8 @@ const assets=['app.js','style.css','floor.js','areas.js','rooms.js','plan-cleanu
 assets.push('plan-fit.js','render-cache.js','service-ops.js','reports.js','dining-progress.js');
 assets.push('accessibility.js','guest.js','join.html');
 assets.push('connection-indicator.js','wait-forecast.js');
+assets.push('room-display.html','room-display.js','room-display.css','room-display-state.js','party-display-addon.js');
+assets.push('store-settings.js');
 assets.push('funzone.html','funzone.js','funzone.css','funzone-sign.html','funzone-sign.js');
 const hash=createHash('sha256');for(const name of assets)hash.update(await readFile(new URL('../public/'+name,import.meta.url)));
 const template=await readFile(new URL('../public/sw.js',import.meta.url),'utf8');

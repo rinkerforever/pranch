@@ -10,6 +10,45 @@ function fixture(){
   const env={DB,SUPABASE_URL:'https://auth.example.test',SUPABASE_PUBLISHABLE_KEY:'public',ASSETS:{fetch:()=>new Response('page')}};
   return{sqlite,env,async call(path,body,token='admin',origin='https://seating.example.test'){return worker.fetch(new Request('https://seating.example.test'+path,{method:body?'POST':'GET',headers:{cookie:`seat_access=${token}`,origin,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),env,{waitUntil(){}});}};
 }
+test('only system admins deactivate and restore stores without deleting seating data',async t=>{
+ t.mock.method(globalThis,'fetch',async(url,options)=>new Response(JSON.stringify({id:options.headers.authorization==='Bearer viewer'?'auth-viewer':'auth-admin'})));
+ const f=fixture();t.after(()=>f.sqlite.close());await f.call('/api/locations/loc/state');
+ assert.equal((await f.call('/api/stores',null,'viewer')).status,403);
+ assert.equal((await f.call('/api/stores',{id:'loc',active:false},'viewer')).status,403);
+ assert.equal((await f.call('/api/stores',{id:'loc',active:'false'})).status,400);
+ assert.equal((await f.call('/api/stores',{id:'missing',active:false})).status,404);
+ assert.equal((await f.call('/api/stores',{id:'loc',active:false})).status,200);
+ assert.equal((await(await f.call('/api/session')).json()).locations.length,0);
+ assert.equal((await f.call('/api/locations/loc/state')).status,404);
+ assert.equal((await(await f.call('/api/stores')).json()).stores[0].active,0);
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM seating_state').get().n,1);
+ assert.equal((await f.call('/api/stores',{id:'loc',active:true})).status,200);
+ assert.equal((await(await f.call('/api/session')).json()).locations.length,1);
+ assert.equal((await f.call('/api/locations/loc/state')).status,200);
+});
+
+test('Party Display domain serves signage and protected API excludes private seating data',async t=>{
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({id:'auth-admin'})));
+ const f=fixture();t.after(()=>f.sqlite.close());
+ const action=async action=>{const current=await(await f.call('/api/locations/loc/state')).json();return f.call('/api/locations/loc/actions',{version:current.version,action});};
+ const display=(key='',room='rose',method='GET')=>worker.fetch(new Request('https://partydisplay.projectaimnet.com/api/party-display/loc?room='+room,{method,headers:{'x-party-display-key':key,origin:'https://partydisplay.projectaimnet.com'}}),f.env,{waitUntil(){}});
+ assert.equal((await display()).status,403);
+ assert.equal((await action({type:'partyDisplaySettings',enabled:true})).status,200);
+ const key=(await(await f.call('/api/locations/loc/state')).json()).state.partyDisplay.key;
+ assert.equal((await display('wrong')).status,403);assert.equal((await display(key,'missing')).status,404);assert.equal((await display(key,'rose','POST')).status,405);
+ await action({type:'scheduleRoom',roomId:'rose',name:'Birthday',size:10,notes:'PRIVATE NOTES',startsAt:Date.now()+60000,endsAt:Date.now()+3600000});
+ const response=await display(key);assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');
+ const data=await response.json();assert.equal(data.view.status,'reserved');assert.equal(data.view.booking.name,'Birthday');
+ assert.deepEqual(Object.keys(data.view.booking).sort(),['endsAt','name','startsAt']);assert.ok(!JSON.stringify(data).includes('PRIVATE NOTES'));assert.ok(!JSON.stringify(data).includes(key));
+ await action({type:'partyDisplaySettings',enabled:false});assert.equal((await display(key)).status,403);
+ await action({type:'partyDisplaySettings',enabled:true});assert.equal((await display(key)).status,403);
+ const newKey=(await(await f.call('/api/locations/loc/state')).json()).state.partyDisplay.key;
+ f.sqlite.exec("INSERT INTO seating_hubs(location_id,enabled,token_hash,last_seen,local_url,created_by) VALUES('loc',1,'test',0,'https://pi.test','admin')");assert.equal((await display(newKey)).status,503);
+ let assetPath;f.env.ASSETS.fetch=r=>{assetPath=new URL(r.url).pathname;return new Response('display');};
+ await worker.fetch(new Request('https://partydisplay.projectaimnet.com/'),f.env,{waitUntil(){}});assert.equal(assetPath,'/room-display.html');
+ await worker.fetch(new Request('https://seating.projectaimnet.com/'),f.env,{waitUntil(){}});assert.equal(assetPath,'/');
+});
+
 test('Fun Zone QR privately updates occupied groups, rejects stale visits and keeps repeat scans idempotent',async t=>{
  t.mock.method(globalThis,'fetch',async(url,options)=>new Response(JSON.stringify({id:options.headers.authorization==='Bearer viewer'?'auth-viewer':'auth-admin'})));
  const f=fixture();t.after(()=>f.sqlite.close());

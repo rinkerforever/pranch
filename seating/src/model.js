@@ -53,7 +53,11 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
   if(['reportHours','cleanPlan','saveArea','deleteArea','addRoomCombination','deleteRoomCombination','layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
-  if(type==='areaPriorities'){
+  if(type==='partyDisplaySettings'){
+    if(!['admin','manager'].includes(role))throw new AppError('Manager access required.',403);
+    if(typeof action.enabled!=='boolean')fail('Choose whether Party Display is enabled.');
+    state.partyDisplay=action.enabled?{enabled:true,key:state.partyDisplay?.enabled&&state.partyDisplay.key||crypto.randomUUID().replaceAll('-','')+crypto.randomUUID().replaceAll('-','')}:{enabled:false};
+  }else if(type==='areaPriorities'){
     if(!['admin','manager'].includes(role))throw new AppError('Manager access required.',403);
     const areas=areaOptions(state),values=action.priorities;
     if(!values||typeof values!=='object'||Array.isArray(values)||Object.keys(values).some(id=>!areas.some(a=>a.id===id))||areas.some(a=>!integer(values[a.id],1,10)))fail('Set every area priority from 1 to 10.');
@@ -136,7 +140,7 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     if(now<booking.startsAt-30*60000||now>=booking.endsAt)fail('Start this booking within 30 minutes of arrival and before its end time.');
     booking.status='activated';
     const result=applyActionCore(state,{type:'bookRoom',roomId:booking.roomId,name:booking.name,size:booking.size,notes:booking.notes,highChair:booking.highChair,booster:booking.booster,endsAt:booking.endsAt},role,now,uuid);
-    result.roomBlocks.at(-1).scheduleId=booking.id;return result;
+    result.roomBlocks.at(-1).scheduleId=booking.id;result.roomBlocks.at(-1).scheduledStartsAt=booking.startsAt;return result;
   } else if(type==='bookRoom') {
     const room=roomInfo(state,action.roomId);if(!room||!room.available||room.blocks.length)fail('This room is not fully open. Clear its current tables or release its room booking first.');
     if(room.unconfirmed)fail('Confirm every table capacity in this room first.');

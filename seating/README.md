@@ -77,3 +77,12 @@ The printed link grants only table Fun Zone updates and does not expose guest na
 - Floor-plan replacement changes the background, not table positions or room filters. Use Full plan and the editor when adding a differently arranged restaurant.
 - Maximum 200 tables, 200 waiting parties, party size 100, configured table capacity 20.
 - API authorization and concurrency tests are automated; final end-to-end login with a real administrator must be verified after deployment.
+# Party room tablet display
+
+Managers enable **Settings → Party Display add-on** per restaurant (off by default). Open one of its room links on each tablet. Enabled rooms also have an **Open tablet display** link under Whole-room bookings. Production links use `https://partydisplay.projectaimnet.com/`; the same Worker serves this custom domain and routes its root to the display. A preview is available at `/room-display.html?demo=1`.
+
+The screen shows the earliest upcoming reservation (including its date, party name and start/end times), counts down during the scheduled interval, then advances to the next reservation or the room's configured Open/Closed state. Combined bookings appear on each affected room. Reservation status takes priority over closure. Time labels use the tablet's timezone, so configure the tablet for the restaurant's timezone.
+
+It reads seating updates every 10 seconds and ticks the countdown every second, correcting for device clock drift using server time. After 45 seconds without a successful refresh, it hides reservation details and asks guests to check with staff. It requests a screen wake lock where supported. The screen does not release tables or alter bookings; existing staff release/cleaning procedures still apply.
+
+Tablet links carry a read-only restaurant display key in the URL fragment, sent to the API in a header. No staff login is needed on the display domain. The API only returns the requested room's status and current/next party names and times; it excludes notes, contact information, table data and staff credentials. Keep these links on restaurant tablets. Disabling the add-on revokes all its links, and re-enabling issues a new key. Local Pi restaurants use their synchronized cloud state; the display reports unavailable when the Pi is offline. Deploying the Worker registers the custom domain through Cloudflare; the zone must be in the deployment account.
