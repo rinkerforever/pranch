@@ -1,9 +1,9 @@
 // Static files only. Never cache API responses, floor plans, PINs or guest records.
-const CACHE='seating-shell-52686f1e37a7';
+const CACHE='seating-shell-e1ce4a4bd731';
 const ASSETS=['/','/index.html','/style.css','/app.js','/floor.js','/areas.js','/rooms.js','/plan-cleanup.js','/area-manager.js','/floor-import.js','/plan-detection.js','/combinations.js','/suggestions.js','/wait-plan.js','/ready-alert.js','/device.js','/manifest.webmanifest','/app-icon.svg','/apple-touch-icon.png'];
 ASSETS.push('/plan-fit.js','/render-cache.js','/service-ops.js','/reports.js','/dining-progress.js');
 ASSETS.push('/accessibility.js');
-ASSETS.push('/connection-indicator.js','/wait-forecast.js');
+ASSETS.push('/connection-indicator.js','/wait-forecast.js','/adaptive-sync.js');
 ASSETS.push('/party-display-addon.js');
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('seating-shell-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));

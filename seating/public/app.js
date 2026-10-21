@@ -6,6 +6,7 @@ import {areaOptions,areaName,roomOptions,partyRoomAreas} from './areas.js';
 import {planImage,cleanUpPlan} from './plan-cleanup.js';
 import {drawingBounds,fullPlanBox,tableFocusBox} from './plan-fit.js';
 import {readyTracker} from './ready-alert.js';
+import {adaptiveSync} from './adaptive-sync.js';
 import {connectionIndicator} from './connection-indicator.js';
 import {installApp,runtimeInfo,pairLocalServer,layoutSettings} from './device.js';
 import {roomInfo,activeRoomBlocks,scheduledRooms,walkInTables} from './rooms.js';
@@ -699,10 +700,12 @@ $('staff-open').onclick=async()=>{
  }));$('staff-dialog').showModal();}catch(e){toast(e.message,true);}
 };
 $('demo-reset').onclick=()=>{localStorage.removeItem('seating-preview');selected.clear();partyId=null;refresh(true);};
-let nextFloorRefresh=0,lastDiningMinute=-1;
-setInterval(()=>{if(document.hidden)return;renderConnection();const minute=Math.floor(Date.now()/60000);if(state&&!editing&&activeScreen==='floor'&&minute!==lastDiningMinute){lastDiningMinute=minute;renderFloor();renderSelection();}if(locationId&&Date.now()>=nextFloorRefresh){nextFloorRefresh=Date.now()+(runtime.mode==='local'?5000:2000);refresh();}},1000);
+const syncSchedule=adaptiveSync();let lastDiningMinute=-1;
+function pollFloor(){if(!document.hidden&&locationId&&syncSchedule.due(Date.now(),runtime.mode))refresh();}
+setInterval(()=>{if(document.hidden)return;renderConnection();const minute=Math.floor(Date.now()/60000);if(state&&!editing&&activeScreen==='floor'&&minute!==lastDiningMinute){lastDiningMinute=minute;renderFloor();renderSelection();}pollFloor();},1000);
+for(const event of ['pointerdown','keydown','wheel'])document.addEventListener(event,()=>{if(document.hidden)return;if(syncSchedule.activity())pollFloor();},{passive:true});
 $('overview-full').onclick=()=>setView('All');
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh(true);});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){syncSchedule.resume();syncSchedule.due(Date.now(),runtime.mode);refresh(true);}});
 window.addEventListener('online',()=>refresh(true));window.addEventListener('offline',()=>{transportReady=false;seatingReachable=false;renderConnection();showReadyAlert();sync(false,'Disconnected · changes unavailable');});
 $('connection-status').onclick=()=>{$('connection-dialog').showModal();renderConnection();};
 async function boot(){runtime=demo?{mode:'cloud'}:await runtimeInfo();const local=runtime.mode==='local';$('local-pin-label').hidden=!local;$('pin-keypad').hidden=!local;$('cloud-email-label').hidden=local;$('cloud-password-label').hidden=local;$('email').required=!local;$('password').required=!local;$('local-pin').required=local;$('pin-enroll-open').hidden=!local;$('login-copy').textContent=local?'On the restaurant Wi-Fi, enter your four-digit employee PIN.':'Sign in with your Kiosk Manager account.';await loadSession();}
