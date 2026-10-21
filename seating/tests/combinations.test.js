@@ -36,3 +36,21 @@ test('presets are idempotent, preserve manual links and removals, and leave cust
  const custom={background:{key:'upload'},tables:[t('a',1400,710),t('b',1450,710)]};presetCombinations(custom);assert.deepEqual(custom.tables[0].allowed,[]);
  presetCombinations(custom,true);assert.deepEqual(custom.tables[0].allowed,['b']);
 });
+
+test('distance cap stops linked chains and distant Tyler 91 suggestions; host can override',async()=>{
+ const {combinationCandidates}=await import('../public/suggestions.js');
+ const {withinCombinationDistance}=await import('../public/combinations.js');
+ const tables=[0,1,2,3].map((n)=>t(String(n),100+n*70,100,{capacity:4,status:'open',allowed:[String(n-1),String(n+1)]}));
+ assert.equal(withinCombinationDistance(tables.slice(0,3),tables),true);
+ assert.equal(withinCombinationDistance(tables,tables),false);
+ assert.ok(combinationCandidates(tables).every(group=>group.length<=3));
+ const state={tables,parties:[{id:'p',name:'Guest',size:16,status:'waiting',arrivedAt:1}],history:[]};
+ const action={type:'seat',partyId:'p',ids:tables.map(t=>t.id)};
+ assert.throws(()=>applyAction(state,action,'host'),/two table spacings/);
+ assert.equal(applyAction(state,{...action,combinationOverride:true},'host').parties[0].status,'seated');
+ assert.throws(()=>applyAction(state,{...action,combinationOverride:true},'viewer'),/view-only/);
+ const tyler=initialState(),a=tyler.tables.find(t=>t.number==='91'),b=tyler.tables.find(t=>t.id==='B-40');
+ a.allowed.push(b.id);b.allowed.push(a.id);
+ assert.equal(withinCombinationDistance([a,b],tyler.tables),false);
+ assert.ok(combinationCandidates(tyler.tables).every(group=>!(group.includes(a)&&group.includes(b))));
+});

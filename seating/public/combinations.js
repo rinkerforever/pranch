@@ -36,3 +36,11 @@ export function presetCombinations(state,force=false){
 }
 export const includesBoothCombination=tables=>tables.length>1&&tables.some(t=>t.kind==='booth');
 export const childBoothFit=(tables,size)=>tables.length===1&&tables[0].kind==='booth'&&!!tables[0].capacity&&size===tables[0].capacity+1;
+// Use the floor's typical nearest-table spacing, not table numbers or approved-link chains.
+export function withinCombinationDistance(selected,all){
+ const positioned=t=>Number.isFinite(t.x)&&Number.isFinite(t.y);
+ const peers=all.filter(t=>t.area===selected[0]?.area&&positioned(t));
+ const distances=peers.map(a=>Math.min(...peers.filter(b=>b.id!==a.id).map(b=>Math.hypot(a.x-b.x,a.y-b.y)).filter(d=>d>0))).filter(Number.isFinite).sort((a,b)=>a-b);
+ const spacing=distances.length?Math.min(105,distances[Math.floor(distances.length/2)]):80;
+ return selected.every(a=>selected.every(b=>!positioned(a)||!positioned(b)||Math.hypot(a.x-b.x,a.y-b.y)<=2*spacing+1));
+}

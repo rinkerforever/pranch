@@ -1,6 +1,6 @@
 import {roomInfo,activeRoomBlocks,scheduledRooms,roomConflict,protectsBooking} from '../public/rooms.js';
 import {areaOptions,roomCombinations} from '../public/areas.js';
-import {presetCombinations,includesBoothCombination,childBoothFit} from '../public/combinations.js';
+import {presetCombinations,includesBoothCombination,childBoothFit,withinCombinationDistance} from '../public/combinations.js';
 import { initialTables } from '../public/floor.js';
 import {waitSettings,planWaitlist} from '../public/wait-plan.js';
 import {quoteForParty} from '../public/wait-forecast.js';
@@ -36,6 +36,7 @@ function combineCheck(state,tables,override=false) {
   if(tables.some(t=>t.status!=='open')) fail('Only open tables can be combined or seated.');
   if(tables.length>1 && new Set(tables.map(t=>t.group)).size===1 && tables[0].group) return;
   if(!override&&tables.length>1 && (!connected(tables) || new Set(tables.map(t=>t.area)).size!==1)) fail('These tables are not an approved combination. Use the host combination override after confirming they can be used together.');
+  if(!override&&!withinCombinationDistance(tables,state.tables))fail('These tables are more than two table spacings apart. Use the host combination override after confirming the fit and clear access.');
 }
 export function applyAction(original, action, role, now=Date.now(), uuid=()=>crypto.randomUUID()) {
  if(action.type==='undo'){
@@ -220,7 +221,7 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     const party=state.parties.find(p=>p.id===action.partyId && p.status==='waiting');
     if(!party) fail('This party has already been seated or removed.');
     if(party.attendance==='away')fail('Return this guest to waiting before seating.');
-    const tables=selectedTables(state,action.ids);combineCheck(state,tables);
+    const tables=selectedTables(state,action.ids);combineCheck(state,tables,action.combinationOverride===true);
     const timing=waitSettings(state);if(protectsBooking(state,tables,now,now+(timing.diningMinutes+timing.cleaningMinutes)*60000))fail('These tables are needed for an upcoming room booking. Use Room bookings or choose other tables.');
     if(tables.some(t=>!t.capacity)) fail('Set the capacity for these booths before assigning a party.');
     if(includesBoothCombination(tables)&&action.boothAcknowledged!==true)fail('Confirm the booth combination notice before seating.');

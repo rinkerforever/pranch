@@ -156,7 +156,7 @@ function chooseTable(t){
   if(busy)return;
   if(editing){showSidebar('details');selected=new Set([t.id]);tableDraft=structuredClone(t);renderFloor();renderEditor();return;}
   const group=groupTables(t),remove=group.every(o=>selected.has(o.id));
-  if(combining){
+  if(combining||partyId){
     if(group.some(o=>o.status!=='open')){toast('Choose open tables to combine.');return;}
     for(const o of group){if(remove)selected.delete(o.id);else selected.add(o.id);}
   }else{selected=remove?new Set():new Set(group.map(o=>o.id));if(partyId)showSidebar('details');else{closeSidebar();if(!remove&&view==='All'){view=t.area;viewFitted=true;viewBox=importedViewBox(view);renderAreas();}}}
@@ -374,7 +374,12 @@ function renderSelection(){
   if(!canWrite())box.append(el('p',{class:'read-only-note'},'View-only access. Ask an administrator for host access to make changes.'));
   if(tables.some(t=>areaClosed(state,t.area)))box.append(el('p',{class:'read-only-note'},'Section closed to new seating. Reopen it in Sections.'));
   if(party?.attendance==='away')box.append(el('p',{class:'read-only-note'},'Guest not present. Return them to waiting from the waitlist before seating.'));
-  if(party)box.append(el('p',{class:'muted'},`${party.size} guests · Choose a table below or tap tables on the floor.`));
+  if(party){
+   box.append(el('p',{class:'muted'},`${party.size} guests · Tap tables on the floor to add or remove them from your selection.`));
+   const clear=el('button',{class:'small'},'Clear selected tables');clear.disabled=!tables.length;clear.onclick=()=>{selected.clear();renderFloor();renderSelection();};box.append(clear);
+   const choices=el('div',{class:'actions'});
+   for(const t of tables){const remove=el('button',{class:'small'},`Remove ${label(t)}`);remove.onclick=()=>chooseTable(t);choices.append(remove);}box.append(choices);
+  }
   if(party?.accessibility)box.append(el('p',{class:'equipment-badges'},'Accessible seating preferred · confirm fit and route with the guest.'));
   if(!party&&canWrite()&&tables.length&&tables.every(t=>t.status==='open')){
    const waiting=state.parties.filter(p=>p.status==='waiting');if(waiting.length){const field=el('label',{},'Seat a waiting guest'),select=el('select',{'aria-label':'Choose waiting guest for selected tables'});select.append(new Option('Choose a guest...', ''));for(const p of waiting)select.append(new Option(`${p.name} · ${p.size} guests`,p.id));select.onchange=()=>{if(select.value){partyId=select.value;renderSelection();renderRecommendations();}};field.append(select);box.append(field);}
@@ -400,15 +405,17 @@ function renderSelection(){
     button.disabled=unknown||party.attendance==='away'||(capacity<party.size&&!override?.checked)||tables.some(t=>t.status!=='open'||areaClosed(state,t.area));
     button.onclick=async()=>{
       const childOverride=!!override?.checked,boothAcknowledged=includesBoothCombination(tables);
+      const combinationOverride=!!box.querySelector('#combination-override')?.checked;
+      if(combinationOverride&&!await confirmChange('Confirm table combination override',`Seat this party at ${tables.map(label).join(' + ')}? Confirm the distance, fit and clear access.`))return;
       if((childOverride||boothAcknowledged)&&!await confirmChange(childOverride?'Confirm child seating override':'Confirm booth combination',childOverride?`Seat ${party.size} guests at this ${capacity}-seat booth, including a small child? Confirm the party fits before seating.`:boothNotice))return;
-      if(await act({type:'seat',partyId:party.id,ids:tables.map(t=>t.id),childOverride,boothAcknowledged}))toast(`${party.name} seated.`);
+      if(await act({type:'seat',partyId:party.id,ids:tables.map(t=>t.id),childOverride,boothAcknowledged,combinationOverride}))toast(`${party.name} seated.`);
     };box.append(button);if(unknown)box.append(el('p',{class:'muted'},'A manager needs to confirm booth capacity first.'));
   }
   const actions=el('div',{class:'actions'});
   for(const status of ['open','in_use','cleaning']){const b=el('button',{class:'small'},status==='in_use'?'Mark in use':status==='open'?'Mark open':'Cleaning');b.onclick=async()=>{if(tables.some(t=>t.party)&&status!=='in_use'&&!await confirmChange('Clear seated party?',`Mark ${tables.map(label).join(' + ')} ${names[status].toLowerCase()} and finish the seated party?`))return;if(await act({type:'status',ids:[...selected],status}))closeSidebar();};actions.append(b);}box.append(actions);
   const grouping=el('div',{class:'actions'});
   if(tables.length>1&&tables.every(t=>t.status==='open')){
-    const toggle=el('label',{class:'equipment-toggle'}),override=el('input',{type:'checkbox'});
+    const toggle=el('label',{class:'equipment-toggle'}),override=el('input',{type:'checkbox',id:'combination-override'});
     toggle.append(override,document.createTextNode('Override combination rules'));
     box.append(toggle,el('p',{class:'muted'},'Use these tables together without changing the layout. Confirm the fit and clear access; separate them when finished.'));
     const b=el('button',{class:'small'},'Combine tables');b.onclick=async()=>{
@@ -427,7 +434,7 @@ function renderRecommendations(){
   if(planned?.ready){const key=ts=>ts.map(t=>t.id).sort().join('|'),index=candidates.findIndex(ts=>key(ts)===key(planned.tables));if(index>=0)candidates.splice(index,1);candidates.unshift(planned.tables);}
   candidates.push(...state.tables.filter(t=>t.status==='open'&&!t.group&&childBoothFit([t],party.size)).slice(0,2).map(t=>[t]));
   candidates=preferDiningTables(candidates,partyRoomAreas(state));
-  $('recommendations').replaceChildren(...candidates.map(ts=>{const b=el('button',{class:'suggestion'}),info=el('span');info.append(el('strong',{},ts.map(label).join(' + ')),el('small',{},`${ts.reduce((n,t)=>n+t.capacity,0)} seats · ${childBoothFit(ts,party.size)?'Small-child override required':includesBoothCombination(ts)?'Booth + table · confirm fit':ts.length>1?'Nearby combination':'Open table'}`));b.append(info,el('span',{},'→'));b.onclick=()=>{combining=false;selected=new Set(ts.map(t=>t.id));renderSelection();showSidebar('details');focusTables(ts);};return b;}));
+  $('recommendations').replaceChildren(...candidates.map(ts=>{const b=el('button',{class:'suggestion'}),info=el('span');info.append(el('strong',{},ts.map(label).join(' + ')),el('small',{},`${ts.reduce((n,t)=>n+t.capacity,0)} seats · ${childBoothFit(ts,party.size)?'Small-child override required':includesBoothCombination(ts)?'Booth + table · confirm fit':ts.length>1?'Nearby combination':'Open table'}`));b.append(info,el('span',{},'→'));b.onclick=()=>{combining=false;selected=new Set(ts.map(t=>t.id));renderFloor();renderSelection();showSidebar('details');focusTables(ts);};return b;}));
   if(planned&&!planned.ready)$('recommendations').append(el('p',{class:'estimate-note'},`Expected next: ${planned.tables.map(label).join(' + ')} · ${waitRange(planned)}${planned.accessiblePreferred?' · Accessibility preferred':''}. Host must confirm the table is clear.`));
   if(!candidates.length)$('recommendations').append(el('p',{class:'empty'},'No available fit. A manager can confirm booth capacities or approve table combinations in Layout editor.'));
 }
