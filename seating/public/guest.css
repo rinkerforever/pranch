@@ -12,3 +12,27 @@
 .equipment-options{display:flex;flex-wrap:wrap;gap:10px}.equipment-toggle{display:flex;flex-direction:row;align-items:center;gap:10px;min-height:44px;cursor:pointer}.equipment-toggle input[type="checkbox"]{width:22px;height:22px;min-height:22px;margin:0;flex-shrink:0;accent-color:#98272b}.equipment-badges{color:#714c1f;background:#faf0d9;border-radius:6px;padding:7px;font-size:13px}.combination-notice{border-left:3px solid #b78120;padding:10px;background:#fff3d9;color:#664716;font-size:13px}.staff-controls{display:grid;gap:8px;min-width:190px}.access-location{font-weight:750}
 #lookup-form{border:1px solid #dec9a8;border-radius:10px;padding:18px;margin-bottom:28px;background:#fffaf0}#lookup-form h2{font-family:Georgia,serif;font-size:23px;margin:0}#lookup-form p{margin:0;color:#675443}#resize-form{margin:18px 0}#size-confirmation{color:#31613d;font-weight:600}
 #wait-summary{background:#fffaf0;border:1px solid #dec9a8;border-radius:10px;padding:14px;margin:16px 0}#queue-position{font-size:23px;font-weight:800;margin:0 0 10px;color:#98272b}#wait-estimate{font-size:19px;font-weight:700;margin:0 0 10px}#wait-summary .muted{font-size:12px;line-height:1.5;margin:0}#lookup-form{margin-top:28px}
+/* Compact status view; keep full-size forms available on demand. */
+#resize-details summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:750;text-decoration:underline}
+#resize-details[open] summary{margin-bottom:8px}
+#resize-details .muted{margin:8px 0}
+.showing-status{padding:8px}
+.showing-status .ranch-header{padding:12px 16px;border-bottom-width:3px}
+.showing-status .ranch-header .brand{font-size:28px}
+.showing-status .location-badge{font-size:12px;padding:3px 12px;margin-top:6px}
+.showing-status .welcome,.showing-status .eyebrow,.showing-status .ranch-footer,.showing-status .status-help{display:none}
+.showing-status .guest-content{padding:14px}
+.showing-status h1{font-size:27px;margin-bottom:10px}
+.showing-status #message:empty,.showing-status #size-confirmation:empty{display:none}
+.showing-status #party{padding:12px}
+.showing-status #party h2{font-size:22px;overflow-wrap:anywhere}
+.showing-status #party-size{margin:4px 0;font-size:15px}
+.showing-status #wait-summary{margin:10px 0;padding:10px}
+.showing-status #queue-position{font-size:21px;margin-bottom:6px}
+.showing-status #wait-estimate{font-size:18px;margin-bottom:6px;line-height:1.3}
+.showing-status #wait-summary .muted{font-size:12px;line-height:1.35}
+.showing-status #guidance{margin:8px 0;font-size:13px;line-height:1.4}
+.showing-status #resize-form{margin:0}
+.showing-status button{min-height:44px;padding:10px 12px}
+.showing-status .secondary{margin-top:8px}
+.showing-status #updated{margin:8px 0 0}
