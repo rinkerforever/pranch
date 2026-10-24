@@ -1,4 +1,5 @@
 import {diningProgress} from './dining-progress.js';
+import {createTableAssignment} from './table-assignment.js';
 import {reportView,reportClock} from './reports.js';
 import {areaClosed,serviceTables,cleaningQueue,delayReason,undoAvailable,undoLabels} from './service-ops.js';
 import {keyedChildren,floorImageUrl} from './render-cache.js';
@@ -367,6 +368,17 @@ function renderWait(){
 }
 
 let selectionRenderKey=null;
+const tableAssignment=createTableAssignment({
+ context:()=>({state,location:locationId,canWrite:canWrite()&&!busy,label}),
+ seat:async(id,ids)=>{
+  const party=state.parties.find(p=>p.id===id&&p.status==='waiting'),tables=state.tables.filter(t=>ids.includes(t.id));
+  if(!party||!canWrite())return false;
+  const boothAcknowledged=includesBoothCombination(tables);
+  if(!await confirmChange('Confirm seating',`Seat ${party.name}, party of ${party.size}, at ${tables.map(label).join(' + ')}?${boothAcknowledged?' This includes a fixed booth; confirm the fit and clear aisle.':''}`))return false;
+  const saved=await act({type:'seat',partyId:id,ids,boothAcknowledged});if(saved)toast(`${party.name} seated.`);return saved;
+ },
+ changeTables:(id,ids)=>{partyId=id;selected=new Set(ids);combining=true;closeSidebar();renderFloor();renderSelection();toast('Tap open tables to adjust the selection, then Review.');}
+});
 function renderSelection(){
   const key=JSON.stringify([locationId,role,transportReady,state.closedAreas,partyId,current(),state.parties.filter(p=>p.status==='waiting'),combining,editing,Math.floor(Date.now()/60000)]);
   if(key===selectionRenderKey)return;selectionRenderKey=key;
@@ -382,6 +394,7 @@ function renderSelection(){
   }
   if(party?.accessibility)box.append(el('p',{class:'equipment-badges'},'Accessible seating preferred · confirm fit and route with the guest.'));
   if(!party&&canWrite()&&tables.length&&tables.every(t=>t.status==='open')){
+   const assign=el('button',{class:'primary wide'},'Assign waiting guest');assign.onclick=()=>tableAssignment.open(tables.map(t=>t.id));box.append(assign);
    const waiting=state.parties.filter(p=>p.status==='waiting');if(waiting.length){const field=el('label',{},'Seat a waiting guest'),select=el('select',{'aria-label':'Choose waiting guest for selected tables'});select.append(new Option('Choose a guest...', ''));for(const p of waiting)select.append(new Option(`${p.name} · ${p.size} guests`,p.id));select.onchange=()=>{if(select.value){partyId=select.value;renderSelection();renderRecommendations();}};field.append(select);box.append(field);}
   }
   if(!tables.length){box.append(el('div',{class:'empty'},party?'Choose a suggestion or select tables on the floor.':'Select a table to see seats, status, and available actions.'));return;}
@@ -470,6 +483,7 @@ function render(){
   $('live-tab').classList.toggle('active',!editing);$('edit-tab').classList.toggle('active',editing);$('editor-toolbar').hidden=!editing;$('wait-panel').hidden=editing;$('selection-panel').hidden=editing;$('layout-panel').hidden=!editing||!tableDraft;
   renderScreen();
   renderAreas();renderFloor();renderWait();renderSelection();renderRecommendations();renderRoomBookings();showReadyAlert();
+  tableAssignment.refresh();
   // Keep unsaved layout fields intact while live state polls update the floor.
 }
 
