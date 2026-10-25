@@ -1,3 +1,4 @@
+import {rotateFloorBox,rotateFloorPoint,FLOOR_ROTATION} from './floor-rotation.js';
 import {diningProgress} from './dining-progress.js';
 import {createTableAssignment} from './table-assignment.js';
 import {reportView,reportClock} from './reports.js';
@@ -166,7 +167,7 @@ function chooseTable(t){
 function tableSymbol(t){
   const cap=t.capacity||0,across=t.orientation==='tb',long=Math.max(38,Math.ceil(cap/2)*14+7);
   const w=t.kind==='booth'?44:(across?(cap<=6?44:long):44),h=t.kind==='booth'?44:(across?38:long);
-  const group=svg('g',{class:`table-node ${areaClosed(state,t.area)?'section-closed ':''}${t.status}${selected.has(t.id)?' is-selected':''}`,transform:`translate(${t.x} ${t.y})`,role:'button',tabindex:0,'aria-label':`${label(t)}, ${t.kind==='booth'?'booth, ':''}${cap?cap+' seats':'capacity unconfirmed'}, ${names[t.status]}`,'data-id':t.id,'aria-pressed':selected.has(t.id)});
+  const group=svg('g',{class:`table-node ${areaClosed(state,t.area)?'section-closed ':''}${t.status}${selected.has(t.id)?' is-selected':''}`,transform:`translate(${t.x} ${t.y}) rotate(180)`,role:'button',tabindex:0,'aria-label':`${label(t)}, ${t.kind==='booth'?'booth, ':''}${cap?cap+' seats':'capacity unconfirmed'}, ${names[t.status]}`,'data-id':t.id,'aria-pressed':selected.has(t.id)});
   group.append(svg('title',{},`${label(t)} · ${cap?cap+' seats':'Confirm booth capacity'} · ${names[t.status]}`));
   if(t.kind==='booth'){
     for(const sign of [-1,1])group.append(svg('rect',across?{x:-w/2,y:sign<0?-h/2-9:h/2+3,width:w,height:6,rx:2,class:'chair'}:{x:sign<0?-w/2-9:w/2+3,y:-h/2,width:6,height:h,rx:2,class:'chair'}));
@@ -196,7 +197,7 @@ function tableSymbol(t){
     if(!editing||t.status!=='open'||t.group)return;
     selected=new Set([t.id]);tableDraft=structuredClone(t);renderEditor();
     const start={x:e.clientX,y:e.clientY};group.dataset.dragged='';group.setPointerCapture(e.pointerId);
-    const move=ev=>{if(Math.hypot(ev.clientX-start.x,ev.clientY-start.y)<4)return;group.dataset.dragged='1';const p=$('floor').createSVGPoint();p.x=ev.clientX;p.y=ev.clientY;const local=p.matrixTransform($('floor').getScreenCTM().inverse());tableDraft.x=Math.max(30,Math.min(1630,Math.round(local.x)));tableDraft.y=Math.max(30,Math.min(920,Math.round(local.y)));group.setAttribute('transform',`translate(${tableDraft.x} ${tableDraft.y})`);$('table-x').value=tableDraft.x;$('table-y').value=tableDraft.y;};
+    const move=ev=>{if(Math.hypot(ev.clientX-start.x,ev.clientY-start.y)<4)return;group.dataset.dragged='1';const p=$('floor').createSVGPoint();p.x=ev.clientX;p.y=ev.clientY;const local=p.matrixTransform($('floor-tables').getScreenCTM().inverse());tableDraft.x=Math.max(30,Math.min(1630,Math.round(local.x)));tableDraft.y=Math.max(30,Math.min(920,Math.round(local.y)));group.setAttribute('transform',`translate(${tableDraft.x} ${tableDraft.y}) rotate(180)`);$('table-x').value=tableDraft.x;$('table-y').value=tableDraft.y;};
     const up=()=>{group.removeEventListener('pointermove',move);group.removeEventListener('pointerup',up);if(group.dataset.dragged)toast('Position updated. Choose Save table to apply it.');setTimeout(()=>delete group.dataset.dragged,50);};group.addEventListener('pointermove',move);group.addEventListener('pointerup',up);
   });return group;
 }
@@ -217,7 +218,7 @@ let floorSceneKey=null;
 function renderFloor(){
   preparePlanFit();
   if(view==='All'&&state.background&&viewFitted)viewBox=fullPlanBox(backgroundFit?.bounds,state.tables);
-  const viewport=$('floor');viewport.setAttribute('viewBox',viewBox.join(' '));
+  const viewport=$('floor');viewport.setAttribute('viewBox',rotateFloorBox(viewBox).join(' '));
   if(!viewport.querySelector('#floor-static')){
    const clip=svg('clipPath',{id:'floor-view-clip'});clip.append(svg('rect',{id:'floor-view-bounds'}));
    const defs=svg('defs');defs.append(clip);
@@ -225,7 +226,7 @@ function renderFloor(){
    scene.append(svg('g',{id:'floor-static'}),svg('g',{id:'floor-groups'}),svg('g',{id:'floor-tables'}));
    viewport.replaceChildren(defs,scene);floorSceneKey=null;
   }
-  const bounds=$('floor-view-bounds');for(const [i,name] of ['x','y','width','height'].entries())bounds.setAttribute(name,viewBox[i]);
+  const bounds=$('floor-view-bounds');for(const [i,name] of ['x','y','width','height'].entries())bounds.setAttribute(name,rotateFloorBox(viewBox)[i]);
   const sceneKey=JSON.stringify([locationId,locationWallPath(locationId,state),state.background||null,...(state.background?[]:[areaOptions(state),roomOptions(state).map(r=>{const info=roomInfo(state,r.id);return [r.id,info.capacity,info.blocks.length];}),activeRoomBlocks(state).some(b=>b.roomId==='combined')])]);
   if(sceneKey!==floorSceneKey){
    const floor=$('floor-static');floor.replaceChildren();floorSceneKey=sceneKey;
@@ -238,9 +239,9 @@ function renderFloor(){
       const areaId=text.startsWith('Section ')?text.slice(8):text,area=areaOptions(state).find(a=>a.id===areaId),isArea=['A','B','C','Rose City','Azalea Trail','Piney Woods'].includes(areaId);
       if(isArea&&!area)continue;
       const small=!['Funzone','Kitchen'].includes(text),display=area?area.name:text;
-      const n=svg('text',{x,y,class:`room-label${small?' small':''}${text.startsWith('Section')?' section':''}`},display);if(text.includes('restroom'))n.setAttribute('transform',`rotate(-90 ${x} ${y})`);floor.append(n);
+      const n=svg('text',{x,y,class:`room-label${small?' small':''}${text.startsWith('Section')?' section':''}`},display);if(text.includes('restroom'))n.setAttribute('transform',`rotate(-90 ${x} ${y})`);n.setAttribute('transform',`rotate(${text.includes('restroom')?90:180} ${x} ${y})`);floor.append(n);
       const room=roomOptions(state).find(r=>r.areas.length===1&&r.areas[0]===areaId);
-      if(room){const info=roomInfo(state,room.id);floor.append(svg('text',{x,y:y+15,class:'room-label small'},`${info.capacity} seats${info.blocks.length?' · Booked':''}`));}
+      if(room){const info=roomInfo(state,room.id);floor.append(svg('text',{x,y:y+15,class:'room-label small',transform:`rotate(180 ${x} ${y+15})`},`${info.capacity} seats${info.blocks.length?' · Booked':''}`));}
     }
     floor.append(svg('rect',{x:1475,y:485,width:94,height:42,rx:3,fill:'none',stroke:'#b1b8ad','stroke-width':2}));
   }
@@ -261,6 +262,7 @@ function renderFloor(){
   $('reassign-open').hidden=!canWrite()||!current().length||current().some(t=>t.status!=='in_use'||t.roomBlock);
   const away=current().length>0&&current().every(t=>t.funZone);const fun=$('funzone-toggle');fun.hidden=editing||!canWrite()||!current().length||current().some(t=>t.status!=='in_use');fun.textContent=away?'Back from FunZone':'In FunZone';fun.setAttribute('aria-pressed',String(away));
   $('save-layout').disabled=!editing||!tableDraft||busy;
+  for(const id of ['floor-static','floor-groups','floor-tables'])$(id).setAttribute('transform',FLOOR_ROTATION);
   renderFocusDock();
 }
 let overviewKey='',focusDockKey='';
@@ -268,16 +270,17 @@ function renderFocusDock(){
  const dock=$('focus-dock');dock.hidden=editing;if(editing)return;
  const map=$('floor-overview'),key=JSON.stringify([locationId,floorSceneKey,state.tables.map(t=>[t.id,t.x,t.y,t.area,t.status]),areaOptions(state),backgroundFit?.bounds]);
  if(key!==overviewKey){
-  overviewKey=key;map.replaceChildren();map.setAttribute('viewBox',fullPlanBox(backgroundFit?.bounds,state.tables).join(' '));
-  const background=$('floor-static').cloneNode(true);background.removeAttribute('id');background.querySelectorAll('[id]').forEach(n=>n.removeAttribute('id'));background.setAttribute('pointer-events','none');map.append(background);
-  for(const t of state.tables)map.append(svg('rect',{x:t.x-16,y:t.y-16,width:32,height:32,rx:3,fill:({open:'#b8dcbc',in_use:'#dc9c96',cleaning:'#e8c56d',reserved:'#c5a6d7'})[t.status]||'#ddd','pointer-events':'none'}));
+  overviewKey=key;map.replaceChildren();map.setAttribute('viewBox',rotateFloorBox(fullPlanBox(backgroundFit?.bounds,state.tables)).join(' '));
+  const mapScene=svg('g',{id:'overview-scene',transform:FLOOR_ROTATION});map.append(mapScene);
+  const background=$('floor-static').cloneNode(true);background.removeAttribute('id');background.removeAttribute('transform');background.querySelectorAll('[id]').forEach(n=>n.removeAttribute('id'));background.setAttribute('pointer-events','none');mapScene.append(background);
+  for(const t of state.tables)mapScene.append(svg('rect',{x:t.x-16,y:t.y-16,width:32,height:32,rx:3,fill:({open:'#b8dcbc',in_use:'#dc9c96',cleaning:'#e8c56d',reserved:'#c5a6d7'})[t.status]||'#ddd','pointer-events':'none'}));
   for(const area of areaOptions(state)){
    const ts=state.tables.filter(t=>t.area===area.id);if(!ts.length)continue;
    const [x,y,width,height]=importedViewBox(area.id),target=svg('rect',{x,y,width,height,fill:'transparent',role:'button',tabindex:0,'aria-label':`Show ${area.name}`,'data-area':area.id,class:'overview-area'});
-   target.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setView(area.id);}});map.append(target);
+   target.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setView(area.id);}});mapScene.append(target);
   }
-  map.onclick=e=>{const p=map.createSVGPoint();p.x=e.clientX;p.y=e.clientY;const matrix=map.getScreenCTM();if(!matrix)return;const point=p.matrixTransform(matrix.inverse());const nearest=state.tables.reduce((best,t)=>!best||Math.hypot(t.x-point.x,t.y-point.y)<Math.hypot(best.x-point.x,best.y-point.y)?t:best,null);if(nearest)setView(nearest.area);};
-  map.append(svg('rect',{id:'overview-view',fill:'#2878ba18',stroke:'#175fa8','stroke-width':8,'pointer-events':'none'}));
+  map.onclick=e=>{const p=map.createSVGPoint();p.x=e.clientX;p.y=e.clientY;const matrix=map.getScreenCTM();if(!matrix)return;const point=rotateFloorPoint(p.matrixTransform(matrix.inverse()));const nearest=state.tables.reduce((best,t)=>!best||Math.hypot(t.x-point.x,t.y-point.y)<Math.hypot(best.x-point.x,best.y-point.y)?t:best,null);if(nearest)setView(nearest.area);};
+  mapScene.append(svg('rect',{id:'overview-view',fill:'#2878ba18',stroke:'#175fa8','stroke-width':8,'pointer-events':'none'}));
  }
  const marker=$('overview-view');if(marker)for(const [i,k]of ['x','y','width','height'].entries())marker.setAttribute(k,viewBox[i]);
  $('overview-caption').textContent=view==='All'?'Full plan · Tap an area':`${areaName(state,view)} · Tap another area`;
@@ -718,7 +721,7 @@ $('layout-form').onsubmit=async e=>{e.preventDefault();if(!tableDraft)return;e.s
 $('remove-table').onclick=async()=>{if(!tableDraft?.id)return;if(await confirmChange('Remove table?',`Remove ${label(tableDraft)} from this layout? You can add it again in Layout editor.`)&&await act({type:'removeTable',id:tableDraft.id})){tableDraft=null;selected.clear();$('layout-panel').hidden=true;renderFloor();}};
 for(const[id,factor]of [['zoom-in',.75],['zoom-out',1.333]])$(id).onclick=()=>{viewFitted=false;const[x,y,w,h]=viewBox;const nw=Math.min(2000,Math.max(120,w*factor)),nh=h*(nw/w);viewBox=[x+(w-nw)/2,y+(h-nh)/2,nw,nh];renderFloor();};$('zoom-fit').onclick=()=>setView(view);
 // Pan the canvas from an empty area, keeping table dragging exclusive to Layout editor.
-$('floor').addEventListener('pointerdown',e=>{if(e.target.closest('.table-node'))return;const floor=$('floor'),start=[e.clientX,e.clientY],box=[...viewBox],matrix=floor.getScreenCTM();floor.setPointerCapture(e.pointerId);const move=ev=>{viewFitted=false;viewBox=[box[0]-(ev.clientX-start[0])/matrix.a,box[1]-(ev.clientY-start[1])/matrix.d,box[2],box[3]];floor.setAttribute('viewBox',viewBox.join(' '));const bounds=$('floor-view-bounds');bounds.setAttribute('x',viewBox[0]);bounds.setAttribute('y',viewBox[1]);const marker=$('overview-view');if(marker){marker.setAttribute('x',viewBox[0]);marker.setAttribute('y',viewBox[1]);}};const end=()=>{floor.removeEventListener('pointermove',move);floor.removeEventListener('pointerup',end);};floor.addEventListener('pointermove',move);floor.addEventListener('pointerup',end);});
+$('floor').addEventListener('pointerdown',e=>{if(e.target.closest('.table-node'))return;const floor=$('floor'),start=[e.clientX,e.clientY],box=[...viewBox],matrix=floor.getScreenCTM();floor.setPointerCapture(e.pointerId);const move=ev=>{viewFitted=false;viewBox=[box[0]+(ev.clientX-start[0])/matrix.a,box[1]+(ev.clientY-start[1])/matrix.d,box[2],box[3]];renderFloor();};const end=()=>{floor.removeEventListener('pointermove',move);floor.removeEventListener('pointerup',end);};floor.addEventListener('pointermove',move);floor.addEventListener('pointerup',end);});
 $('upload').onchange=async()=>{
   const file=$('upload').files[0];if(!file||busy||uploadBusy||!canEdit())return;
   if(file.size>20*1024*1024){toast('Choose a file smaller than 20 MB.',true);$('upload').value='';return;}
