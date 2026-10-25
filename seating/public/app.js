@@ -306,12 +306,14 @@ function renderGuestQuote(){
  const basis=`${plan.settings.diningMinutes} min dining + ${plan.settings.cleaningMinutes} min cleaning · ${plan.settings.source}${plan.settings.sampleCount?' · '+plan.settings.sampleCount+' completed visits':''}.`;
  $('guest-estimate').textContent=(seatNowMode?'':editGuest&&!estimate?'Updated estimate appears after saving. ':`Estimated wait: ${waitRange(estimate)}. `)+basis+(preferences.accessibility&&preferredAreas(state).size===0?' No preferred areas configured yet; confirm suitable seating with the guest.':'');
  if(!seatNowMode)return;
- const options=seatingOptions(plan,size,preferences),previous=$('seat-now-options').querySelector('input:checked')?.value;
+ const options=seatingOptions(plan,size,{...preferences,selectedIds:[...selected]}),previous=$('seat-now-options').querySelector('input:checked')?.value;
+ const keepPrevious=options.open.some(o=>JSON.stringify(o.tables.map(t=>t.id))===previous);
  $('seat-now-options').replaceChildren(...options.open.map((option,i)=>{
   const row=el('label',{class:'seat-now-option'}),radio=el('input',{type:'radio',name:'seat-now-table',value:JSON.stringify(option.tables.map(t=>t.id))}),text=el('span');
-  radio.checked=previous?previous===radio.value:i===0;
-  text.append(el('strong',{},option.tables.map(label).join(' + ')),el('small',{},`${option.capacity} seats · ${option.accessiblePreferred?'Accessibility-preferred area · ':''}${includesBoothCombination(option.tables)?'Includes booth · confirm fit':'Open now'}`));row.append(radio,text);return row;
+  radio.checked=keepPrevious?previous===radio.value:i===0;
+  text.append(el('strong',{},option.tables.map(label).join(' + ')),el('small',{},`${option.selectedOnFloor?'Selected on floor · ':''}${option.capacity} seats · ${option.accessiblePreferred?'Accessibility-preferred area · ':''}${includesBoothCombination(option.tables)?'Includes booth · confirm fit':'Open now'}`));row.append(radio,text);return row;
  }));
+ if(selected.size&&!options.open.some(o=>o.selectedOnFloor))$('seat-now-options').prepend(el('p',{class:'muted'},'Your floor selection is not available for this party size after the current waitlist and bookings. Choose another option below, or choose an existing waiting party above.'));
  if(!options.open.length)$('seat-now-options').append(el('p',{class:'empty'},'No suitable open table after the current queue. Add this party to the waitlist or adjust the party size.'));
  $('guest-save').disabled=!canWrite()||!options.open.length;
  $('seat-now-soon').replaceChildren(...options.soon.map(option=>{

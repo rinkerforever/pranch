@@ -52,7 +52,11 @@ export function seatingOptions(plan,size,preferences={}){
  const rooms=plan.context.partyRoomAreas;
  const open=options.filter(o=>o.ready),diningOpen=open.filter(o=>!usesPartyRoom(o.tables,rooms));
  const order=(a,b)=>(a.minutes-(a.accessiblePreferred?15:0))-(b.minutes-(b.accessiblePreferred?15:0))||Number(!!b.accessiblePreferred)-Number(!!a.accessiblePreferred)||a.minutes-b.minutes||Number(usesPartyRoom(a.tables,rooms))-Number(usesPartyRoom(b.tables,rooms))||seatingPriority(a.tables,plan.context.areaPriorities)-seatingPriority(b.tables,plan.context.areaPriorities)||a.capacity-b.capacity||a.tables.length-b.tables.length;
- return {open:(diningOpen.length?diningOpen:open).sort(order).slice(0,5),soon:options.filter(o=>!o.ready&&o.minutes<=30).sort(order).slice(0,5)};
+ const ranked=(diningOpen.length?diningOpen:open).sort(order).slice(0,5);
+ const selected=preferences.selectedIds;
+ const chosen=Array.isArray(selected)&&selected.length?all.find(o=>o.ready&&o.tables.length===selected.length&&o.tables.every(t=>selected.includes(t.id))):null;
+ if(chosen){const other=ranked.filter(o=>key(o.tables)!==key(chosen.tables));ranked.splice(0,ranked.length,{...chosen,selectedOnFloor:true},...other);}
+ return {open:ranked,soon:options.filter(o=>!o.ready&&o.minutes<=30).sort(order).slice(0,5)};
 }
 export function waitRange(estimate){
  if(!estimate)return 'Host review needed';

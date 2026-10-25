@@ -66,3 +66,18 @@ test('real completed visits and manually cleared tables train the recent mean wi
  s=applyAction(s,{type:'waitSettings',diningMinutes:90,cleaningMinutes:3},'host',now);assert.equal(waitSettings(s).diningMinutes,90);
  s=applyAction(s,{type:'waitSettings',automatic:true},'host',now);assert.equal(waitSettings(s).diningMinutes,53);
 });
+
+test('Seat now puts the floor selection first even outside the five recommendations',()=>{
+ const s=state();s.tables=Array.from({length:8},(_,i)=>table('t'+i));
+ let options=seatingOptions(planWaitlist(s,now),2,{selectedIds:['t7']});
+ assert.equal(options.open[0].tables[0].id,'t7');assert.equal(options.open[0].selectedOnFloor,true);
+ assert.equal(options.open.filter(o=>o.tables[0].id==='t7').length,1);
+ s.tables[7].status='cleaning';options=seatingOptions(planWaitlist(s,now),2,{selectedIds:['t7']});assert.ok(options.open.every(o=>!o.selectedOnFloor));
+ s.tables[7].status='open';options=seatingOptions(planWaitlist(s,now),8,{selectedIds:['t7']});assert.ok(options.open.every(o=>!o.selectedOnFloor));
+ s.parties=[{id:'p',name:'First',size:4,status:'waiting',arrivedAt:1}];options=seatingOptions(planWaitlist(s,now),2,{selectedIds:['t0']});assert.ok(options.open.every(o=>!o.selectedOnFloor));
+});
+test('an explicitly selected valid combination remains first instead of being reduced to a smaller table',()=>{
+ const s=state();s.tables[0].allowed=['other'];s.tables[1].allowed=['near'];s.tables[1].area='A';
+ const options=seatingOptions(planWaitlist(s,now),2,{selectedIds:['near','other']});
+ assert.equal(options.open[0].tables.length,2);assert.equal(options.open[0].selectedOnFloor,true);
+});
