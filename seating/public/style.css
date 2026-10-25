@@ -280,3 +280,5 @@
 .assignment-error:empty{display:none}
 .table-assignment .dialog-actions{position:sticky;bottom:0;background:var(--panel,#fff);padding:12px 0}
 @media(max-width:599px){.assignment-party{grid-template-columns:1fr}.assignment-party small{grid-column:1;grid-row:auto}.table-assignment .dialog-actions{flex-wrap:wrap}}
+/* Whole-room seating uses the existing app theme. */
+.seat-room-dialog{width:650px;max-width:calc(100vw - 32px);max-height:90dvh;overflow:auto}.seat-room-dialog>p{margin:14px 0;line-height:1.5}.room-seat-choices{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0}.room-seat-card{padding:14px;min-height:72px;text-align:left;line-height:1.5}.room-seat-card[aria-pressed=true]{border:2px solid var(--green);background:#f0f5ed}.seat-room-dialog>label{display:flex;flex-direction:column;gap:8px;margin:14px 0}.room-seat-info{background:#f3f5ef;padding:12px;border-radius:8px}@media(max-width:599px){.room-seat-choices{grid-template-columns:1fr}}

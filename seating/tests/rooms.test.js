@@ -105,3 +105,24 @@ test('failed activation preserves future booking; cancellation frees its time',(
  s=run(s,{type:'cancelRoomBooking',id});s=schedule(s);assert.equal(s.roomSchedule.length,1);
  assert.throws(()=>run(s,{type:'cancelRoomBooking',id:s.roomSchedule[0].id},'viewer'),/view-only/);
 });
+
+test('seat whole room atomically assigns a waiting party and supports configured combined rooms',()=>{
+ for(const roomId of ['rose','azalea','piney','combined']){
+  const s=initialState();s.parties=[{id:'waiting',name:'Waiting group',size:12,status:'waiting',arrivedAt:1000}];
+  const before=JSON.stringify(s),n=run(s,{type:'seatWholeRoom',roomId,partyId:'waiting'});
+  assert.equal(JSON.stringify(s),before);assert.equal(n.parties[0].status,'seated');
+  const room=roomInfo(n,roomId);assert.ok(room.tables.every(t=>t.status==='in_use'&&t.party==='waiting'));
+  assert.equal(activeRoomBlocks(n)[0].status,'in_use');assert.equal(n.parties.length,1);
+  const released=run(n,{type:'releaseRoom',id:activeRoomBlocks(n)[0].id,status:'cleaning'});
+  assert.equal(released.parties[0].status,'completed');assert.ok(roomInfo(released,roomId).tables.every(t=>t.status==='cleaning'));
+ }
+});
+test('whole-room seating rejects conflicts, closed rooms, missing or away parties and inadequate capacity',()=>{
+ const s=initialState();s.parties=[{id:'p',name:'Guest',size:12,status:'waiting',arrivedAt:1000}];
+ const action={type:'seatWholeRoom',roomId:'rose',partyId:'p'};
+ assert.throws(()=>run(s,action,'viewer'),/view-only/);
+ assert.throws(()=>run(s,{...action,partyId:undefined}),/waiting party/);
+ for(const change of [s=>s.parties[0].attendance='away',s=>s.parties[0].size=99,s=>s.closedAreas={'Rose City':true},s=>s.tables.find(t=>t.area==='Rose City').status='in_use',s=>s.roomSchedule=[{id:'future',status:'scheduled',areas:['Rose City'],startsAt:110000,endsAt:99999999}]]){
+  const blocked=structuredClone(s);change(blocked);const before=JSON.stringify(blocked);assert.throws(()=>run(blocked,action));assert.equal(JSON.stringify(blocked),before);
+ }
+});

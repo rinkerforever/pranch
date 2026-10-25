@@ -379,6 +379,28 @@ const tableAssignment=createTableAssignment({
  },
  changeTables:(id,ids)=>{partyId=id;selected=new Set(ids);combining=true;closeSidebar();renderFloor();renderSelection();toast('Tap open tables to adjust the selection, then Review.');}
 });
+function openSeatWholeRoom(){
+ if(!canWrite()||busy)return;
+ const dialog=document.createElement('dialog');dialog.className='seat-room-dialog';
+ dialog.innerHTML='<div class="panel-title"><h2>Seat a party room</h2><button type="button" class="quiet">Close</button></div><p>Seat a waiting party now. Every table in the selected room will be assigned to that party.</p><div class="room-seat-choices"></div><label>Waiting party<select class="room-seat-party"></select></label><label>Room time (minutes)<input class="room-seat-time" type="number" min="1" max="720" value="120"></label><p class="room-seat-info" role="status"></p><button class="primary wide room-seat-submit" disabled>Choose a room and party</button><p class="muted">Future reservations remain in Bookings. Current bookings, closed sections, and occupied tables must be cleared before seating.</p>';
+ document.body.append(dialog);let chosen=null,saving=false;
+ const choices=dialog.querySelector('.room-seat-choices'),guest=dialog.querySelector('select'),duration=dialog.querySelector('input'),info=dialog.querySelector('.room-seat-info'),save=dialog.querySelector('.room-seat-submit');
+ dialog.querySelector('.quiet').onclick=()=>dialog.close();dialog.addEventListener('close',()=>dialog.remove(),{once:true});
+ guest.append(new Option('Choose a waiting party',''),...state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt).map(p=>new Option(`${p.name} · ${p.size} guests${p.attendance==='away'?' · Away':''}`,p.id)));
+ const options=roomOptions(state).filter(r=>r.areas.length<=2);
+ function update(){
+  const minutes=Number(duration.value),party=state.parties.find(p=>p.id===guest.value&&p.status==='waiting'),room=chosen&&roomInfo(state,chosen);
+  const conflict=room&&scheduledRooms(state).some(b=>b.areas.some(a=>room.areas.includes(a))&&b.startsAt<Date.now()+minutes*60000&&b.endsAt>Date.now());
+  const valid=room?.available&&!room.unconfirmed&&party&&party.attendance!=='away'&&party.size<=room.capacity&&Number.isInteger(minutes)&&minutes>=1&&minutes<=720&&!conflict;
+  choices.replaceChildren(...options.map(option=>{const r=roomInfo(state,option.id),b=el('button',{type:'button','aria-pressed':String(chosen===r.id),class:'room-seat-card'},`${r.name} · ${r.capacity} seats · ${r.available?'Open':'Unavailable'}`);b.disabled=saving;b.onclick=()=>{chosen=r.id;update();};return b;}));
+  info.textContent=!room?'Choose a room above.':!room.available?'All tables must be open and the section reopened before seating.':room.unconfirmed?'Confirm all table capacities first.':conflict?'This duration overlaps a future booking. Choose a shorter room time.':party?.attendance==='away'?'Return this guest to waiting first.':party&&party.size>room.capacity?'This party needs a larger room combination.':`${room.tables.length} tables will be seated together.${room.areas.length>1?' Confirm the divider is open and the rooms can serve one group.':''}`;
+  save.disabled=saving||!canWrite()||busy||!valid;save.textContent=valid?`Seat ${party.name} in ${room.name}`:'Choose an available room and party';
+ }
+ guest.onchange=duration.oninput=update;
+ save.onclick=async()=>{update();if(save.disabled)return;const room=roomInfo(state,chosen),party=state.parties.find(p=>p.id===guest.value);if(!await confirmChange('Seat whole room?',`Seat ${party.name} in ${room.name} for ${duration.value} minutes? All ${room.tables.length} tables will be in use.${room.areas.length>1?' Confirm the divider is open.':''}`))return;saving=true;update();try{if(await act({type:'seatWholeRoom',roomId:chosen,partyId:guest.value,endsAt:Date.now()+Number(duration.value)*60000})){dialog.close();toast('Whole party seated. Use Bookings to finish and release the room.');}}finally{saving=false;if(dialog.open)update();}};
+ dialog.showModal();update();
+}
+const seatWholeRoomButton=el('button',{class:'primary'},'Seat room');seatWholeRoomButton.onclick=openSeatWholeRoom;$('combine-select').parentElement.prepend(seatWholeRoomButton);
 function renderSelection(){
   const key=JSON.stringify([locationId,role,transportReady,state.closedAreas,partyId,current(),state.parties.filter(p=>p.status==='waiting'),combining,editing,Math.floor(Date.now()/60000)]);
   if(key===selectionRenderKey)return;selectionRenderKey=key;
@@ -476,6 +498,7 @@ function renderAllowed(allowed=[]){const area=$('table-area').value,kind=$('tabl
 }
 function render(){
   $('clean-plan').hidden=!state.background;
+  seatWholeRoomButton.hidden=editing||activeScreen!=='floor'||!canWrite();
   $('seat-now-open').hidden=activeScreen!=='floor'||editing||!canWrite();
   $('guest-checkin').hidden=!canWrite();$('areas-open').hidden=!canEdit();
   $('phone-location').textContent=locations.find(l=>l.id===locationId)?.name||'';

@@ -54,7 +54,11 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
   if(['reportHours','cleanPlan','saveArea','deleteArea','addRoomCombination','deleteRoomCombination','layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
-  if(type==='partyDisplaySettings'){
+  if(type==='seatWholeRoom'){
+    if(!action.partyId)fail('Choose a waiting party.');
+    const held=applyActionCore(state,{type:'bookRoom',roomId:action.roomId,partyId:action.partyId,endsAt:action.endsAt},role,now,uuid);
+    return applyActionCore(held,{type:'seatRoom',id:held.roomBlocks.at(-1).id},role,now,uuid);
+  }else if(type==='partyDisplaySettings'){
     if(!['admin','manager'].includes(role))throw new AppError('Manager access required.',403);
     if(typeof action.enabled!=='boolean')fail('Choose whether Party Display is enabled.');
     state.partyDisplay=action.enabled?{enabled:true,key:state.partyDisplay?.enabled&&state.partyDisplay.key||crypto.randomUUID().replaceAll('-','')+crypto.randomUUID().replaceAll('-','')}:{enabled:false};
