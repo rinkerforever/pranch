@@ -2,6 +2,17 @@
 export const SHIFT_MS=12*60*60*1000;
 export const teamActive=t=>['pending','accepted'].includes(t.status);
 export const teamAssignments=(s,now=Date.now())=>(s.team?.tablets||[]).filter(t=>t.name&&now-t.at<SHIFT_MS);
+export function seatingTaskIds(s,task){
+ const party=s.parties.find(p=>p.id===task.partyId);
+ return party?.status==='seated'?s.tables.filter(t=>t.party===party.id).map(t=>t.id):task.ids;
+}
+export function mySeatingTasks(s,deviceId,now=Date.now()){
+ if(!s?.team?.enabled)return [];
+ const me=teamAssignments(s,now).find(t=>t.id===deviceId);if(!me)return [];
+ return (s.team.tasks||[]).filter(t=>t.kind==='seat'&&teamActive(t)&&now-t.at<SHIFT_MS&&
+  (t.owner?t.owner===deviceId&&t.ownerName===me.name:t.target===deviceId)&&
+  s.parties.some(p=>p.id===t.partyId&&['waiting','seated'].includes(p.status)));
+}
 export function reconcileTeam(s,now){
  if(!s.team)return;
  const tablets=teamAssignments(s,now);
@@ -9,8 +20,7 @@ export function reconcileTeam(s,now){
   if(!teamActive(t))continue;
   const party=s.parties.find(p=>p.id===t.partyId),tables=t.ids.map(id=>s.tables.find(v=>v.id===id));
   if(now-t.at>=SHIFT_MS){t.status='expired';t.updatedAt=now;continue;}
-  if(t.kind==='seat'&&party?.status==='seated'){t.status='done';t.updatedAt=now;continue;}
-  if(t.kind==='seat'&&party?.status!=='waiting'||tables.some(v=>!v)){t.status='cancelled';t.updatedAt=now;continue;}
+  if(t.kind==='seat'&&!['waiting','seated'].includes(party?.status)||tables.some(v=>!v)){t.status='cancelled';t.updatedAt=now;continue;}
   if(t.kind==='clean'&&tables.every(v=>v.status==='open')){t.status='done';t.updatedAt=now;continue;}
   if(t.kind==='clean'&&tables.some(v=>!['open','cleaning'].includes(v.status))){t.status='cancelled';t.updatedAt=now;continue;}
   if(t.owner&&!tablets.some(v=>v.id===t.owner&&v.name===t.ownerName)){t.status='pending';t.owner=null;t.ownerName=null;t.target=null;t.updatedAt=now;}
@@ -62,7 +72,9 @@ export function applyTeam(s,a,role,now,uuid,fail){
  }else if(a.type==='teamCancel'){
   if(task.from!==me.id&&!['admin','manager'].includes(role))fail('Only the sender or a manager can cancel this request.');task.status='cancelled';
  }else if(a.type==='teamDone'){
-  if(task.owner!==me.id||!['help','chair'].includes(task.kind))fail('Finish seating or cleaning using the floor controls.');task.status='done';
+  if(task.owner!==me.id)fail('Only the assigned teammate can finish this request.');
+  if(task.kind==='seat'&&!s.parties.some(p=>p.id===task.partyId&&p.status==='seated'))fail('Seat the party using the floor controls before marking this request done.');
+  if(!['help','chair','seat'].includes(task.kind))fail('Finish cleaning using the floor controls.');task.status='done';
  }else fail('Unknown team action.');
  task.updatedAt=now;
 }

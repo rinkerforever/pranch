@@ -187,6 +187,7 @@ function tableSymbol(t){
    group.setAttribute('aria-label',group.getAttribute('aria-label')+`, ${timing.description}`);
   }}
   group.append(svg('rect',{x:-w/2-15,y:-h/2-15,width:w+30,height:h+30,rx:7,class:'focus-ring','pointer-events':'all'}));
+  group.append(svg('rect',{x:-w/2-18,y:-h/2-18,width:w+36,height:h+36,rx:10,class:'team-assignment-ring','pointer-events':'none'}));
   if(t.group)group.append(svg('circle',{cx:w/2-2,cy:-h/2+1,r:3,fill:'#3476ba'}));
   if(t.status==='in_use'&&t.funZone){
    const badge=svg('g',{class:'funzone-badge',transform:`translate(${w/2+1} ${-h/2-1})`,'pointer-events':'none'});
@@ -269,6 +270,7 @@ function renderFloor(){
   $('save-layout').disabled=!editing||!tableDraft||busy;
   for(const id of ['floor-static','floor-groups','floor-tables'])$(id).setAttribute('transform',floorTransform(floorAngle(state,view)));
   renderFocusDock();
+  team.paintHighlights();
 }
 let overviewKey='',focusDockKey='';
 function renderFocusDock(){
@@ -693,7 +695,7 @@ $('location').onchange=async()=>{combining=false;locationId=$('location').value;
 $('live-tab').onclick=()=>{editing=false;tableDraft=null;setScreen('floor');};$('edit-tab').onclick=()=>{combining=false;$('app').classList.remove('phone-menu-open');closeSidebar();activeScreen='floor';editing=!editing;partyId=null;tableDraft=null;selected.clear();render();if(editing)toast('Select a table to edit its capacity, chairs, or allowed combinations.');};
 $('phone-floor').onclick=()=>{editing=false;setScreen('floor');};$('phone-wait').onclick=()=>openWaitlist();
 const partyDisplayButton=el('button',{id:'party-display-addon'},'Party Display add-on');
-const team=createTeam({getContext:()=>({state,locationId,locationName:locations.find(l=>l.id===locationId)?.name||'',canWrite:canWrite(),canEdit:canEdit(),partyId,ids:[...selected],label}),save:act,toast,openFloor:task=>{partyId=task.partyId;selected=new Set(task.ids);setScreen('floor');render();showSidebar('details');}});
+const team=createTeam({getContext:()=>({state,locationId,locationName:locations.find(l=>l.id===locationId)?.name||'',canWrite:canWrite(),canEdit:canEdit(),partyId,ids:[...selected],label}),save:act,toast,openFloor:task=>{partyId=state.parties.some(p=>p.id===task.partyId&&p.status==='waiting')?task.partyId:null;selected=new Set(task.ids);editing=false;setScreen('floor');render();const tables=current();if(tables.length)focusTables(tables);showSidebar('details');}});
 $('app-settings-dialog').append(partyDisplayButton);
 partyDisplayButton.onclick=()=>{if(!state)return;openPartyDisplayAddon({getState:()=>state,locationId,canEdit:canEdit(),save:act,demo});};
 const storeSettingsButton=el('button',{id:'store-settings'},'Manage stores');

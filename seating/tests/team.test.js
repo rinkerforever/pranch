@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {initialState,applyAction} from '../src/model.js';
-import {SHIFT_MS} from '../public/team-state.js';
+import {SHIFT_MS,mySeatingTasks,seatingTaskIds} from '../public/team-state.js';
 const now=100000,alex='tablet-alex',sam='tablet-sam';
 const run=(s,a,role='host',at=now)=>applyAction(s,a,role,at,()=>crypto.randomUUID());
 function setup(){let s=run(initialState(),{type:'teamSettings',enabled:true,names:['Alex','Sam']},'manager');for(const [deviceId,name] of [[alex,'Alex'],[sam,'Sam']])s=run(s,{type:'teamAssign',deviceId,name,label:name+' tablet'});return s;}
@@ -25,19 +25,37 @@ test('requests have one owner, enforce target, and only owner can finish',()=>{
  assert.throws(()=>run(s,{type:'teamAccept',deviceId:alex,id}),/another teammate/);
  s=run(s,{type:'teamAccept',deviceId:sam,id});assert.equal(s.team.tasks[0].ownerName,'Sam');
  assert.throws(()=>run(s,{type:'teamAccept',deviceId:sam,id}),/another teammate/);
- assert.throws(()=>run(s,{type:'teamDone',deviceId:alex,id}),/Finish seating/);
+ assert.throws(()=>run(s,{type:'teamDone',deviceId:alex,id}),/Only the assigned/);
  s=run(s,{type:'teamDone',deviceId:sam,id});assert.equal(s.team.tasks[0].status,'done');
  assert.throws(()=>run(s,{type:'teamAccept',deviceId:sam,id}),/no longer active/);
 });
-test('seat handoff completes through real seating checks and undo restores it',()=>{
+test('seat handoff stays highlighted until its owner confirms Done after real seating',()=>{
  let s=run(setup(),{type:'addParty',name:'Johnson',size:6,highChair:true}),partyId=s.parties[0].id;
  s=request(s,{kind:'seat',partyId,ids:['C-71'],target:sam});const id=s.team.tasks[0].id;
+ assert.equal(mySeatingTasks(s,sam,now).length,1);assert.equal(mySeatingTasks(s,alex,now).length,0);
  s=run(s,{type:'teamAccept',deviceId:sam,id});assert.equal(s.parties[0].status,'waiting');assert.equal(s.tables.find(t=>t.id==='C-71').status,'open');
  assert.throws(()=>run(s,{type:'teamDone',deviceId:sam,id}),/floor controls/);
  assert.throws(()=>run(s,{type:'seat',partyId,ids:['C-72']}),/enough seats/);
- s=run(s,{type:'seat',partyId,ids:['C-71']});assert.equal(s.team.tasks[0].status,'done');
+ s=run(s,{type:'seat',partyId,ids:['C-71']});assert.equal(s.team.tasks[0].status,'accepted');assert.equal(mySeatingTasks(s,sam,now).length,1);
+ assert.throws(()=>run(s,{type:'teamDone',deviceId:alex,id}),/Only the assigned/);
+ const finished=run(s,{type:'teamDone',deviceId:sam,id});assert.equal(finished.team.tasks[0].status,'done');assert.equal(mySeatingTasks(finished,sam,now).length,0);assert.equal(finished.tables.find(t=>t.id==='C-71').status,'in_use');
  s=run(s,{type:'undo',undoId:s.lastUndo.id});assert.equal(s.team.tasks[0].status,'accepted');assert.equal(s.parties[0].status,'waiting');
  s=run(s,{type:'cancelParty',id:partyId});assert.equal(s.team.tasks[0].status,'cancelled');
+});
+test('broadcast handoffs highlight only after acceptance and clear on return, shift end, disable or expiry',()=>{
+ let s=run(setup(),{type:'addParty',name:'Smith',size:2});s=request(s,{kind:'seat',partyId:s.parties[0].id,ids:['C-71']});const id=s.team.tasks[0].id;
+ assert.deepEqual(mySeatingTasks(s,sam,now),[]);
+ s=run(s,{type:'teamAccept',deviceId:sam,id});assert.equal(mySeatingTasks(s,sam,now).length,1);
+ assert.equal(mySeatingTasks(run(s,{type:'teamReturn',deviceId:sam,id}),sam,now).length,0);
+ assert.equal(mySeatingTasks(run(s,{type:'teamAssign',deviceId:sam,name:'',label:'Floor'}),sam,now).length,0);
+ assert.equal(mySeatingTasks(run(s,{type:'teamSettings',enabled:false,names:['Alex','Sam']},'manager'),sam,now).length,0);
+ assert.equal(mySeatingTasks(s,sam,now+SHIFT_MS).length,0);
+});
+test('highlight follows the actual seated tables if the party is seated elsewhere',()=>{
+ let s=run(setup(),{type:'addParty',name:'Smith',size:2}),partyId=s.parties[0].id;s=request(s,{kind:'seat',partyId,ids:['C-71'],target:sam});const id=s.team.tasks[0].id;
+ s=run(s,{type:'teamAccept',deviceId:sam,id});s=run(s,{type:'seat',partyId,ids:['C-51']});
+ assert.deepEqual(seatingTaskIds(s,mySeatingTasks(s,sam,now)[0]),['C-51']);
+ s=run(s,{type:'status',ids:['C-51'],status:'cleaning'});assert.deepEqual(mySeatingTasks(s,sam,now),[]);
 });
 test('cleanup completes only when tables are actually open',()=>{
  let s=setup();assert.throws(()=>request(s,{kind:'clean',ids:['C-71']}),/need cleaning/);

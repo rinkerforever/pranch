@@ -1,4 +1,4 @@
-import {teamAssignments,teamActive,SHIFT_MS} from './team-state.js';
+import {teamAssignments,teamActive,SHIFT_MS,mySeatingTasks,seatingTaskIds} from './team-state.js';
 export function createTeam({getContext,save,openFloor,toast}){
  const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text)n.textContent=text;if(cls)n.className=cls;return n;};
  let deviceId=localStorage.getItem('seating-team-device');if(!deviceId){deviceId=crypto.randomUUID();localStorage.setItem('seating-team-device',deviceId);}
@@ -8,12 +8,35 @@ export function createTeam({getContext,save,openFloor,toast}){
  const panel=el('aside',null,'team-panel');panel.hidden=true;panel.setAttribute('aria-label','Team communication');panel.id='team-panel';button.setAttribute('aria-controls',panel.id);
  const head=el('div',null,'panel-title'),title=el('h2','Team'),close=el('button','Close');head.append(title,close);
  const body=el('div');panel.append(head,body);document.getElementById('app').append(panel);
+ const guidance=el('section',null,'team-seating-guidance');guidance.id='team-seating-guidance';guidance.hidden=true;guidance.setAttribute('aria-label','Your seating assignments');document.getElementById('ready-banner').before(guidance);
+ let guidanceKey='';
  let lastKey='',lastLocation=null,seen=new Map(),initialized=false,target='';
  const shut=()=>{panel.hidden=true;button.setAttribute('aria-expanded','false');};close.onclick=()=>{shut();button.focus();};
  panel.addEventListener('keydown',e=>{if(e.key==='Escape'){shut();button.focus();}});
  button.onclick=()=>{panel.hidden=!panel.hidden;button.setAttribute('aria-expanded',String(!panel.hidden));lastKey='';refresh();if(!panel.hidden)close.focus();};
  function action(type,extra={}){return save({type,deviceId,...extra});}
  function btn(text,fn,disabled=false){const b=el('button',text);b.disabled=disabled;b.onclick=fn;return b;}
+ function showTask(task){shut();openFloor({...task,ids:seatingTaskIds(getContext().state,task)});}
+ async function acceptTask(task){if(await action('teamAccept',{id:task.id})&&task.kind==='seat')showTask(task);}
+ function paintHighlights(){
+  const s=getContext().state,ids=new Set(mySeatingTasks(s,deviceId).flatMap(t=>seatingTaskIds(s,t)));
+  for(const node of document.querySelectorAll('#floor-tables .table-node')){
+   const active=ids.has(node.dataset.id);node.classList.toggle('team-seat-target',active);
+   const label=node.getAttribute('aria-label').replace(/, Your seating assignment$/,'');node.setAttribute('aria-label',label+(active?', Your seating assignment':''));
+  }
+ }
+ function renderGuidance(c){
+  const tasks=mySeatingTasks(c.state,deviceId),s=c.state;guidance.hidden=!tasks.length;paintHighlights();
+  const key=JSON.stringify([c.locationId,c.canWrite,tasks.map(t=>[t.id,t.status,t.owner,taskTitle(t,s),s.parties.find(p=>p.id===t.partyId)?.status])]);if(key===guidanceKey)return;guidanceKey=key;guidance.replaceChildren();
+  for(const task of tasks){
+   const row=el('div',null,'team-seating-row'),copy=el('div'),seated=s.parties.find(p=>p.id===task.partyId)?.status==='seated';
+   copy.append(el('strong',taskTitle(task,s)),el('p',seated?'Party seated · Tap Done to clear your highlight.':'Your assigned tables are outlined in purple.','muted'));row.append(copy);
+   row.append(btn('Show table',()=>showTask(task)));
+   if(task.status==='pending')row.append(btn('I’ve got it',()=>acceptTask(task),!c.canWrite));
+   else row.append(btn('Done',()=>action('teamDone',{id:task.id}),!c.canWrite||!seated));
+   guidance.append(row);
+  }
+ }
  function assign(){
   const c=getContext(),s=c.state;if(!s?.team?.enabled)return;
   const d=el('dialog'),h=el('h2','Who is using this tablet?'),label=el('label','Tablet label'),input=el('input');input.maxLength=30;input.value=teamAssignments(s).find(t=>t.id===deviceId)?.label||localStorage.getItem('seating-team-label')||'Tablet';label.append(input);
@@ -31,6 +54,7 @@ export function createTeam({getContext,save,openFloor,toast}){
  };
  function refresh(){
   const c=getContext(),s=c.state,enabled=!!s?.team?.enabled;
+  renderGuidance(c);
   settings.hidden=!s||!c.canEdit;button.hidden=!enabled;
   if(c.locationId!==lastLocation){lastLocation=c.locationId;seen=new Map();initialized=false;target='';shut();lastKey='';}
   if(!enabled){shut();initialized=false;return;}
@@ -57,14 +81,14 @@ export function createTeam({getContext,save,openFloor,toast}){
    const p=s.parties.find(p=>p.id===t.partyId);if(p)row.append(el('p',[p.highChair?'High chair':'',p.booster?'Booster':'',p.accessibility?'Accessible seating':''].filter(Boolean).join(' · ')));
    const actions=el('div',null,'team-choices');
    if(me&&c.canWrite&&teamActive(t)){
-    if(t.status==='pending'&&(!t.target||t.target===deviceId))actions.append(btn('I’ve got it',()=>action('teamAccept',{id:t.id})));
+    if(t.status==='pending'&&(!t.target||t.target===deviceId))actions.append(btn('I’ve got it',()=>acceptTask(t)));
     if(t.owner===deviceId||t.target===deviceId)actions.append(btn('Return to team',()=>action('teamReturn',{id:t.id})));
-    if(t.owner===deviceId){if(['seat','clean'].includes(t.kind))actions.append(btn(t.kind==='seat'?'Open seating controls':'Open cleaning controls',()=>{shut();openFloor(t);}));else actions.append(btn('Done',()=>action('teamDone',{id:t.id})));}
+    if(t.owner===deviceId){if(['seat','clean'].includes(t.kind))actions.append(btn(t.kind==='seat'?'Open seating controls':'Open cleaning controls',()=>showTask(t)));if(t.kind!=='clean')actions.append(btn('Done',()=>action('teamDone',{id:t.id}),t.kind==='seat'&&p?.status!=='seated'));}
     if(t.from===deviceId||c.canEdit)actions.append(btn('Cancel',()=>action('teamCancel',{id:t.id})));
    }
    row.append(actions);body.append(row);
   }
  }
- function taskTitle(t,s){const c=getContext(),tables=t.ids.map(id=>s.tables.find(v=>v.id===id)).filter(Boolean).map(c.label).join(' + ');return t.kind==='help'?'Help at the front door':t.kind==='clean'?`Clean ${tables}`:t.kind==='chair'?`High chair → ${tables}`:`Seat ${s.parties.find(p=>p.id===t.partyId)?.name||'party'} → ${tables}`;}
- return {refresh};
+ function taskTitle(t,s){const c=getContext(),tables=seatingTaskIds(s,t).map(id=>s.tables.find(v=>v.id===id)).filter(Boolean).map(c.label).join(' + ');return t.kind==='help'?'Help at the front door':t.kind==='clean'?`Clean ${tables}`:t.kind==='chair'?`High chair → ${tables}`:`Seat ${s.parties.find(p=>p.id===t.partyId)?.name||'party'} → ${tables}`;}
+ return {refresh,paintHighlights};
 }

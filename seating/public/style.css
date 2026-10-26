@@ -292,3 +292,9 @@
 .team-choices button{min-height:44px}
 .team-request{padding:14px 0;border-top:1px solid #cbd5cc}
 .team-panel select,.team-panel label{width:100%}
+.team-assignment-ring{display:none;fill:none;stroke:#783bc1;stroke-width:4;stroke-dasharray:9 5;vector-effect:non-scaling-stroke}
+.team-seat-target .team-assignment-ring{display:block}
+.team-seating-guidance{background:#f3eafa;border:2px solid #783bc1;border-radius:10px;padding:10px 14px;margin-bottom:10px;color:#36214c}
+.team-seating-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.team-seating-row+.team-seating-row{margin-top:10px;padding-top:10px;border-top:1px solid #d4bae9}
+.team-seating-row>div{flex:1;min-width:160px}.team-seating-row button{min-height:44px}.team-seating-row .muted{color:#604775}
