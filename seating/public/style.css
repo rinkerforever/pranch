@@ -284,3 +284,5 @@
 .seat-room-dialog{width:650px;max-width:calc(100vw - 32px);max-height:90dvh;overflow:auto}.seat-room-dialog>p{margin:14px 0;line-height:1.5}.room-seat-choices{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0}.room-seat-card{padding:14px;min-height:72px;text-align:left;line-height:1.5}.room-seat-card[aria-pressed=true]{border:2px solid var(--green);background:#f0f5ed}.seat-room-dialog>label{display:flex;flex-direction:column;gap:8px;margin:14px 0}.room-seat-info{background:#f3f5ef;padding:12px;border-radius:8px}@media(max-width:599px){.room-seat-choices{grid-template-columns:1fr}}
 /* Existing waitlist shortcut in the Seat now form. */
 .seat-now-existing{padding:14px;background:#f3f5ef;border:1px solid var(--line);border-radius:9px}.seat-now-existing label{display:flex;flex-direction:column;gap:8px;font-weight:650}.seat-now-existing select{width:100%;min-height:44px}.seat-now-existing p{font-size:12px;line-height:1.5;margin:8px 0 0}
+
+.closing-confirm{flex-direction:row;align-items:flex-start;line-height:1.5}.closing-confirm input{width:auto;margin-top:3px}#rotate-view{margin-left:7px;border-radius:6px}

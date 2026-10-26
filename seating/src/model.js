@@ -53,8 +53,20 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
   const state=structuredClone(original);
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
-  if(['reportHours','cleanPlan','saveArea','deleteArea','addRoomCombination','deleteRoomCombination','layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
-  if(type==='seatWholeRoom'){
+  if(['clearAfterClose','reportHours','cleanPlan','saveArea','deleteArea','addRoomCombination','deleteRoomCombination','layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
+  if(type==='viewOrientation'){
+    const views=['All','Dining','Party rooms',...areaOptions(state).map(a=>a.id)];
+    if(!views.includes(action.view)||![0,180].includes(action.angle))fail('Choose a valid floor view and orientation.');
+    state.viewOrientations={...(state.viewOrientations||{}),[action.view]:action.angle};
+  }else if(type==='clearAfterClose'){
+    if(action.pin!=='1111')fail('Incorrect manager PIN.');
+    const cleared=state.tables.filter(t=>['in_use','cleaning'].includes(t.status));
+    const partyIds=new Set(cleared.map(t=>t.party).filter(Boolean));
+    for(const p of state.parties)if(partyIds.has(p.id)&&p.status==='seated'){p.status='completed';p.closedAt=now;delete p.roomBlock;}
+    for(const b of state.roomBlocks||[])if(b.status==='in_use'){b.status='released';b.closedAt=now;}
+    for(const t of cleared)Object.assign(t,{status:'open',party:null,group:null,roomBlock:null,seatedAt:null,cleaningAt:null,funZone:false,funZoneSince:null});
+  }else if(type==='seatWholeRoom'){
+
     if(!action.partyId)fail('Choose a waiting party.');
     const held=applyActionCore(state,{type:'bookRoom',roomId:action.roomId,partyId:action.partyId,endsAt:action.endsAt},role,now,uuid);
     return applyActionCore(held,{type:'seatRoom',id:held.roomBlocks.at(-1).id},role,now,uuid);

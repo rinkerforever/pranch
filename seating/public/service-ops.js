@@ -28,7 +28,7 @@ export function cleaningQueue(state,plan,now=Date.now(),planner){
  }
  return rows.sort((a,b)=>a.started-b.started||a.key.localeCompare(b.key));
 }
-export const undoLabels={funZone:'FunZone marker',reassign:'reassign party',status:'table status',seat:'seat guest',seatNow:'seat walk-in',combine:'combine tables',split:'separate tables',cancelParty:'remove guest',partyContact:'guest attendance',areaAvailability:'section availability'};
+export const undoLabels={clearAfterClose:'clear tables after close',funZone:'FunZone marker',reassign:'reassign party',status:'table status',seat:'seat guest',seatNow:'seat walk-in',combine:'combine tables',split:'separate tables',cancelParty:'remove guest',partyContact:'guest attendance',areaAvailability:'section availability'};
 const same=(a,b)=>JSON.stringify(a??null)===JSON.stringify(b??null);
 export function recordUndo(before,after,type,now,id){
  if(!undoLabels[type])return null;
@@ -37,7 +37,7 @@ export function recordUndo(before,after,type,now,id){
   const left=new Map(before[key].map(v=>[v.id,v])),right=new Map(after[key].map(v=>[v.id,v]));
   for(const id of new Set([...left.keys(),...right.keys()]))if(!same(left.get(id),right.get(id)))changes.push({key,id,before:left.get(id)||null,after:right.get(id)||null});
  }
- for(const key of ['diningSamples','closedAreas'])if(!same(before[key],after[key]))changes.push({key,before:before[key]??null,after:after[key]??null});
+ for(const key of ['diningSamples','closedAreas','roomBlocks'])if(!same(before[key],after[key]))changes.push({key,before:before[key]??null,after:after[key]??null});
  return changes.length?{id,type,at:now,changes:structuredClone(changes)}:null;
 }
 export function undoAvailable(state,now=Date.now()){
