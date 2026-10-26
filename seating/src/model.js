@@ -234,12 +234,15 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     if(tables.some(t=>(plan.available.get(t.id)??Infinity)>0))fail('These tables are occupied, held, or planned for waiting guests. Choose another recommendation.');
     const party={id:uuid(),name:clean(action.name,80)||'Walk-in',size,notes:clean(action.notes,300),...equipment(action),arrivedAt:now,status:'waiting',source:'seat-now'};
     state.parties.push(party);
-    const seated=applyActionCore(state,{type:'seat',partyId:party.id,ids:action.ids,boothAcknowledged:action.boothAcknowledged,childOverride:action.childOverride},role,now,uuid);
+    const seated=applyActionCore(state,{type:'seat',partyId:party.id,ids:action.ids,boothAcknowledged:action.boothAcknowledged,childOverride:action.childOverride,teamTarget:action.teamTarget,deviceId:action.deviceId},role,now,uuid);
     seated.history[0].type='seatNow';return seated;
   } else if(type==='seat') {
     const party=state.parties.find(p=>p.id===action.partyId && p.status==='waiting');
     if(!party) fail('This party has already been seated or removed.');
     if(party.attendance==='away')fail('Return this guest to waiting before seating.');
+    if(action.teamTarget){
+      applyTeam(state,{type:'teamRequest',deviceId:action.deviceId,target:action.teamTarget,kind:'seat',partyId:party.id,ids:action.ids},role,now,uuid,fail);
+    }
     const tables=selectedTables(state,action.ids);combineCheck(state,tables,action.combinationOverride===true);
     const timing=waitSettings(state);if(protectsBooking(state,tables,now,now+(timing.diningMinutes+timing.cleaningMinutes)*60000))fail('These tables are needed for an upcoming room booking. Use Room bookings or choose other tables.');
     if(tables.some(t=>!t.capacity)) fail('Set the capacity for these booths before assigning a party.');

@@ -78,3 +78,25 @@ test('history retention never drops unfinished work',()=>{
  }
  assert.equal(s.team.tasks.find(t=>t.id===first).status,'pending');assert.equal(s.team.tasks.length,51);
 });
+test('Seat now atomically assigns a seated walk-in and its highlighted tables to a teammate',()=>{
+ let s=setup();s=run(s,{type:'seatNow',name:'Taylor',size:4,ids:['C-71'],teamTarget:sam,deviceId:alex});
+ const party=s.parties.find(p=>p.name==='Taylor'),task=s.team.tasks[0];
+ assert.equal(party.status,'seated');assert.equal(task.partyId,party.id);assert.equal(task.target,sam);assert.equal(task.status,'pending');
+ assert.equal(mySeatingTasks(s,sam,now).length,1);assert.equal(mySeatingTasks(s,alex,now).length,0);
+ const undone=run(s,{type:'undo',undoId:s.lastUndo.id});assert.equal(undone.parties.length,0);assert.equal(undone.team.tasks.length,0);assert.equal(undone.tables.find(t=>t.id==='C-71').status,'open');
+ s=run(s,{type:'teamAccept',deviceId:sam,id:task.id});s=run(s,{type:'teamDone',deviceId:sam,id:task.id});assert.equal(mySeatingTasks(s,sam,now).length,0);assert.equal(s.tables.find(t=>t.id==='C-71').status,'in_use');
+});
+test('assigned seating rejects unavailable recipients or invalid seats without seating or creating tasks',()=>{
+ const s=setup(),before=JSON.stringify(s),a={type:'seatNow',size:4,ids:['C-71'],teamTarget:sam,deviceId:alex};
+ for(const action of [{...a,teamTarget:'missing-tablet'},{...a,teamTarget:alex},{...a,deviceId:'missing-tablet'},{...a,size:100}])assert.throws(()=>run(s,action));
+ assert.equal(JSON.stringify(s),before);
+ assert.throws(()=>run(s,a,'viewer'),/view-only/);
+ assert.throws(()=>run(s,a,'host',now+SHIFT_MS),/Choose who/);
+ const off=run(s,{type:'teamSettings',enabled:false,names:['Alex','Sam']},'manager');assert.throws(()=>run(off,a),/turned off/);
+ const own=run(off,{type:'seatNow',size:4,ids:['C-71']});assert.equal(own.parties[0].status,'seated');assert.equal(own.team.tasks.length,0);
+});
+test('an existing waiting party can be seated and assigned in one action',()=>{
+ let s=run(setup(),{type:'addParty',name:'Waiting guest',size:2}),partyId=s.parties[0].id;
+ s=run(s,{type:'seat',partyId,ids:['C-71'],teamTarget:sam,deviceId:alex});
+ assert.equal(s.parties.length,1);assert.equal(s.parties[0].status,'seated');assert.equal(s.team.tasks[0].partyId,partyId);assert.equal(mySeatingTasks(s,sam,now).length,1);
+});

@@ -415,6 +415,9 @@ function openSeatWholeRoom(){
 const seatWholeRoomButton=el('button',{class:'primary'},'Seat room');seatWholeRoomButton.onclick=openSeatWholeRoom;$('combine-select').parentElement.prepend(seatWholeRoomButton);
 function renderSelection(){
  team.refresh();
+ const assignmentKey=JSON.stringify([locationId,partyId,[...selected]]),selectionBox=$('selection-body');
+ const previousAssignment=selectionBox.dataset.assignmentKey===assignmentKey?selectionBox.querySelector('#selected-team-assignment select')?.value||'':'';
+ selectionBox.dataset.assignmentKey=assignmentKey;
   const key=JSON.stringify([locationId,role,transportReady,state.closedAreas,partyId,current(),state.parties.filter(p=>p.status==='waiting'),combining,editing,Math.floor(Date.now()/60000)]);
   if(key===selectionRenderKey)return;selectionRenderKey=key;
   const box=$('selection-body'),tables=current(),party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');const overrideKey=JSON.stringify([party?.id,party?.size,tables.map(t=>[t.id,t.capacity,t.status])]),keepOverride=box.dataset.overrideKey===overrideKey&&!!box.querySelector('#child-override')?.checked;box.dataset.overrideKey=overrideKey;box.replaceChildren();$('selection-title').textContent=party?`Seat ${party.name}`:'Table details';
@@ -444,6 +447,7 @@ function renderSelection(){
   if(includesBoothCombination(tables))box.append(el('p',{class:'combination-notice'},boothNotice));
   if(party){
     const button=el('button',{id:'seat-selected-party',class:'primary wide'},tables.length>1?'Combine & seat party':'Seat party');let override=null;
+    box.append(team.seatingPicker('selected-team-assignment',previousAssignment));
     if(childBoothFit(tables,party.size)){
       const toggle=el('label',{class:'equipment-toggle'});override=el('input',{type:'checkbox',id:'child-override'});override.checked=keepOverride;
       toggle.append(override,document.createTextNode('Small-child override: 1 extra guest at this booth'));
@@ -456,7 +460,8 @@ function renderSelection(){
       const combinationOverride=!!box.querySelector('#combination-override')?.checked;
       if(combinationOverride&&!await confirmChange('Confirm table combination override',`Seat this party at ${tables.map(label).join(' + ')}? Confirm the distance, fit and clear access.`))return;
       if((childOverride||boothAcknowledged)&&!await confirmChange(childOverride?'Confirm child seating override':'Confirm booth combination',childOverride?`Seat ${party.size} guests at this ${capacity}-seat booth, including a small child? Confirm the party fits before seating.`:boothNotice))return;
-      if(await act({type:'seat',partyId:party.id,ids:tables.map(t=>t.id),childOverride,boothAcknowledged,combinationOverride}))toast(`${party.name} seated.`);
+      const assignment=team.seatingAssignment('selected-team-assignment');
+      if(await act({type:'seat',partyId:party.id,ids:tables.map(t=>t.id),childOverride,boothAcknowledged,combinationOverride,...assignment}))toast(assignment.teamTarget?`${party.name} assigned to teammate; tables marked in use.`:`${party.name} seated.`);
     };box.append(button);if(unknown)box.append(el('p',{class:'muted'},'A manager needs to confirm booth capacity first.'));
   }
   const actions=el('div',{class:'actions'});
@@ -668,6 +673,7 @@ function openGuest(p=null,immediate=false){
  $('guest-name').value=p?.name||'';$('guest-name').required=!seatNowMode;$('guest-name').placeholder=seatNowMode?'Walk-in (name optional)':'';
  $('guest-size').value=p?.size||2;$('guest-notes').value=p?.notes||'';$('guest-highchair').checked=!!p?.highChair;$('guest-booster').checked=!!p?.booster;$('guest-accessibility').checked=!!p?.accessibility;
  updatePartySizePicker(Number($('guest-size').value)>12);
+ $('guest-team-assignment')?.remove();$('seat-now-panel').prepend(team.seatingPicker('guest-team-assignment'));
  $('guest-save').textContent=seatNowMode?'Seat at selected table':'Save to waiting list';$('guest-save').disabled=false;$('seat-now-panel').hidden=!seatNowMode;$('seat-now-wait').hidden=!seatNowMode;$('seat-now-options').replaceChildren();renderGuestQuote();$('guest-dialog').showModal();$('guest-title').focus();
 }
 function pinKey(key){
@@ -716,6 +722,7 @@ $('seat-now-open').onclick=()=>{
   if(!party){toast('This party is no longer waiting. Select another waiting guest.',true);return;}
   renderSelection();
   const seat=$('seat-selected-party');
+  if(state.team?.enabled){showSidebar('details');toast('Choose who will seat this party, then confirm seating.');return;}
   if(seat&&!seat.disabled){seat.click();return;}
   showSidebar('details');
   toast('Choose available tables that fit '+party.name+'. Review any required seating overrides.',true);
@@ -728,12 +735,13 @@ $('guest-form').onsubmit=async e=>{
  e.preventDefault();if(busy)return;
  const action={type:seatNowMode?'seatNow':editGuest?'editParty':'addParty',id:editGuest,name:$('guest-name').value,size:Number($('guest-size').value),notes:$('guest-notes').value,highChair:$('guest-highchair').checked,booster:$('guest-booster').checked,accessibility:$('guest-accessibility').checked};
  if(seatNowMode){
+  Object.assign(action,team.seatingAssignment('guest-team-assignment'));
   const checked=$('seat-now-options').querySelector('input:checked');if(!checked){toast('Choose an open table first.',true);return;}
   action.ids=JSON.parse(checked.value);const tables=state.tables.filter(t=>action.ids.includes(t.id));action.boothAcknowledged=includesBoothCombination(tables);
   if(action.boothAcknowledged&&!await confirmChange('Confirm booth combination','This includes a fixed booth. Confirm the fit and clear aisle before seating.'))return;
  }
  e.submitter.disabled=true;
- try{if(await act(action)){$('guest-dialog').close();toast(seatNowMode?'Party seated.':editGuest?'Party updated.':'Added to waiting list.');}}
+ try{if(await act(action)){$('guest-dialog').close();toast(action.teamTarget?'Seating assigned to teammate; tables marked in use.':seatNowMode?'Party seated.':editGuest?'Party updated.':'Added to waiting list.');}}
  finally{e.submitter.disabled=false;guestAdviceKey='';if($('guest-dialog').open)renderGuestQuote();}
 };
 for(const b of document.querySelectorAll('.close-dialog'))b.onclick=()=>b.closest('dialog').close();

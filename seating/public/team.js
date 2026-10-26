@@ -90,5 +90,17 @@ export function createTeam({getContext,save,openFloor,toast}){
   }
  }
  function taskTitle(t,s){const c=getContext(),tables=seatingTaskIds(s,t).map(id=>s.tables.find(v=>v.id===id)).filter(Boolean).map(c.label).join(' + ');return t.kind==='help'?'Help at the front door':t.kind==='clean'?`Clean ${tables}`:t.kind==='chair'?`High chair → ${tables}`:`Seat ${s.parties.find(p=>p.id===t.partyId)?.name||'party'} → ${tables}`;}
- return {refresh,paintHighlights};
+ function seatingPicker(id,previous=''){
+  const c=getContext(),wrap=el('div');wrap.id=id;wrap.hidden=!c.state?.team?.enabled;
+  const label=el('label','Who will seat this party?'),select=el('select');select.setAttribute('aria-label','Who will seat this party?');select.append(new Option('I’ll seat them',''));
+  const tablets=teamAssignments(c.state),me=tablets.find(t=>t.id===deviceId),others=tablets.filter(t=>t.id!==deviceId);
+  for(const t of others)select.append(new Option(`${t.name} · ${t.label}`,t.id));
+  if(previous&&!others.some(t=>t.id===previous))select.append(new Option('Previous teammate unavailable — choose again',previous));
+  select.value=previous;
+  select.disabled=!me||!others.length||!c.canWrite;label.append(select);wrap.append(label);
+  wrap.append(el('p',!me?'To assign a teammate, choose your name in Team first.':!others.length?'No other tablets have a staff member assigned yet.':'Choosing a teammate marks these tables in use and sends them the seating task and highlight.','muted'));
+  return wrap;
+ }
+ function seatingAssignment(id){const target=document.getElementById(id)?.querySelector('select')?.value;return target?{teamTarget:target,deviceId}:{};}
+ return {refresh,paintHighlights,seatingPicker,seatingAssignment};
 }
