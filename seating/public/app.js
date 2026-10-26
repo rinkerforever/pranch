@@ -439,7 +439,7 @@ function renderSelection(){
   const boothNotice='This combination includes a fixed booth. Confirm the nearby table works for this party and leaves the aisle clear.';
   if(includesBoothCombination(tables))box.append(el('p',{class:'combination-notice'},boothNotice));
   if(party){
-    const button=el('button',{class:'primary wide'},tables.length>1?'Combine & seat party':'Seat party');let override=null;
+    const button=el('button',{id:'seat-selected-party',class:'primary wide'},tables.length>1?'Combine & seat party':'Seat party');let override=null;
     if(childBoothFit(tables,party.size)){
       const toggle=el('label',{class:'equipment-toggle'});override=el('input',{type:'checkbox',id:'child-override'});override.checked=keepOverride;
       toggle.append(override,document.createTextNode('Small-child override: 1 extra guest at this booth'));
@@ -704,7 +704,20 @@ $('tablet-details').onclick=()=>showSidebar('details');$('sidebar-close').onclic
 $('add-guest').onclick=()=>openGuest();$('clear-selection').onclick=()=>{selected.clear();renderFloor();renderSelection();};
 $('combine-select').onclick=()=>{if(busy||!canWrite())return;if(combining){if(selected.size>=2)showSidebar('details');return;}combining=true;selected.clear();closeSidebar();renderFloor();renderSelection();toast('Tap the open tables you want to combine, then tap Review.');};
 $('combine-cancel').onclick=()=>{combining=false;selected.clear();closeSidebar();renderFloor();renderSelection();};
-$('seat-now-open').onclick=()=>{if(canWrite())openGuest(null,true);};
+$('seat-now-open').onclick=()=>{
+ if(!canWrite()||busy)return;
+ if(partyId){
+  const party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');
+  if(!party){toast('This party is no longer waiting. Select another waiting guest.',true);return;}
+  renderSelection();
+  const seat=$('seat-selected-party');
+  if(seat&&!seat.disabled){seat.click();return;}
+  showSidebar('details');
+  toast('Choose available tables that fit '+party.name+'. Review any required seating overrides.',true);
+  return;
+ }
+ openGuest(null,true);
+};
 $('seat-now-wait').onclick=()=>{seatNowMode=false;document.getElementById('seat-now-existing')?.setAttribute('hidden','');guestAdviceKey='';$('guest-title').textContent='Add guests';$('guest-name').required=true;$('guest-save').textContent='Save to waiting list';$('guest-save').disabled=false;$('seat-now-panel').hidden=true;$('seat-now-wait').hidden=true;renderGuestQuote();};
 $('guest-form').onsubmit=async e=>{
  e.preventDefault();if(busy)return;
