@@ -286,3 +286,9 @@
 .seat-now-existing{padding:14px;background:#f3f5ef;border:1px solid var(--line);border-radius:9px}.seat-now-existing label{display:flex;flex-direction:column;gap:8px;font-weight:650}.seat-now-existing select{width:100%;min-height:44px}.seat-now-existing p{font-size:12px;line-height:1.5;margin:8px 0 0}
 
 .closing-confirm{flex-direction:row;align-items:flex-start;line-height:1.5}.closing-confirm input{width:auto;margin-top:3px}#rotate-view{margin-left:7px;border-radius:6px}
+.team-panel{position:fixed;right:0;top:0;bottom:0;width:min(430px,100vw);z-index:80;background:var(--panel,#fff);color:var(--ink,#263329);border-left:1px solid #cbd5cc;box-shadow:-8px 0 32px #0002;padding:20px;overflow-y:auto}
+.team-panel[hidden]{display:none}
+.team-choices{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.team-choices button{min-height:44px}
+.team-request{padding:14px 0;border-top:1px solid #cbd5cc}
+.team-panel select,.team-panel label{width:100%}

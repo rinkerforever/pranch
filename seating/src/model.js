@@ -6,6 +6,7 @@ import {waitSettings,planWaitlist} from '../public/wait-plan.js';
 import {quoteForParty} from '../public/wait-forecast.js';
 import {areaClosed,recordUndo,undoAvailable,restoreUndo} from '../public/service-ops.js';
 import {recordReport} from '../public/reports.js';
+import {applyTeam,reconcileTeam} from '../public/team-state.js';
 export class AppError extends Error { constructor(message, status=400) { super(message); this.status=status; } }
 const fail = message => { throw new AppError(message); };
 const integer = (v,min,max) => Number.isInteger(v) && v>=min && v<=max;
@@ -54,7 +55,9 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
   if(['clearAfterClose','reportHours','cleanPlan','saveArea','deleteArea','addRoomCombination','deleteRoomCombination','layout','addTable','removeTable','background','replaceFloor','presetCombinations'].includes(type) && !['admin','manager'].includes(role)) throw new AppError('Manager access required.',403);
-  if(type==='viewOrientation'){
+  if(typeof type==='string'&&type.startsWith('team')){
+    applyTeam(state,action,role,now,uuid,fail);
+  }else if(type==='viewOrientation'){
     const views=['All','Dining','Party rooms',...areaOptions(state).map(a=>a.id)];
     if(!views.includes(action.view)||![0,180].includes(action.angle))fail('Choose a valid floor view and orientation.');
     state.viewOrientations={...(state.viewOrientations||{}),[action.view]:action.angle};
@@ -338,6 +341,7 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     state.background=action.background;
   } else fail('Unknown action.');
   for(const t of state.tables)if((t.status!=='in_use'||!t.funZone)&&t.funZoneSince)t.funZoneSince=null;
+  reconcileTeam(state,now);
   state.history.unshift({type,at:now});state.history=state.history.slice(0,100);
   const active=state.parties.filter(p=>['waiting','seated','reserved'].includes(p.status));
   const closed=state.parties.filter(p=>!['waiting','seated','reserved'].includes(p.status)&&now-(p.closedAt||now)<86400000).slice(-200);

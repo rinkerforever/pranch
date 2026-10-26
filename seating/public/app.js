@@ -1,4 +1,5 @@
 import {openClosingManager} from './closing-manager.js';
+import {createTeam} from './team.js';
 import {rotateFloorBox,rotateFloorPoint,floorAngle,floorTransform} from './floor-rotation.js';
 import {diningProgress} from './dining-progress.js';
 import {createTableAssignment} from './table-assignment.js';
@@ -79,7 +80,7 @@ function endpoint(resource){return `/api/locations/${encodeURIComponent(location
 function sync(ok,text){$('sync-text').textContent=text;$('sync-dot').style.background=ok?'#2e805c':'#c48a25';}
 function connectionStatus(value=connection){
  connection=value;transportReady=demo||!!state&&!value?.requiresRecovery&&!(runtime.mode!=='local'&&value?.mode==='local'&&!value.online);
- renderConnection();
+ renderConnection();team.refresh();
  $('network-banner').hidden=!(value?.requiresRecovery||value?.mode==='local'&&!value.online);
  $('network-banner').textContent=value?.requiresRecovery?'Data recovery required. Seating changes are paused; contact the administrator.':runtime.mode==='local'?'Internet unavailable — host check-in only. Local devices are sharing through this Pi.':'Restaurant offline — host check-in only. This is the last cloud update; seating changes are paused.';
  if(value?.requiresRecovery){sync(false,'Recovery required · changes paused');return;}
@@ -411,6 +412,7 @@ function openSeatWholeRoom(){
 }
 const seatWholeRoomButton=el('button',{class:'primary'},'Seat room');seatWholeRoomButton.onclick=openSeatWholeRoom;$('combine-select').parentElement.prepend(seatWholeRoomButton);
 function renderSelection(){
+ team.refresh();
   const key=JSON.stringify([locationId,role,transportReady,state.closedAreas,partyId,current(),state.parties.filter(p=>p.status==='waiting'),combining,editing,Math.floor(Date.now()/60000)]);
   if(key===selectionRenderKey)return;selectionRenderKey=key;
   const box=$('selection-body'),tables=current(),party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');const overrideKey=JSON.stringify([party?.id,party?.size,tables.map(t=>[t.id,t.capacity,t.status])]),keepOverride=box.dataset.overrideKey===overrideKey&&!!box.querySelector('#child-override')?.checked;box.dataset.overrideKey=overrideKey;box.replaceChildren();$('selection-title').textContent=party?`Seat ${party.name}`:'Table details';
@@ -515,7 +517,7 @@ function render(){
   $('live-tab').classList.toggle('active',!editing);$('edit-tab').classList.toggle('active',editing);$('editor-toolbar').hidden=!editing;$('wait-panel').hidden=editing;$('selection-panel').hidden=editing;$('layout-panel').hidden=!editing||!tableDraft;
   renderScreen();
   renderAreas();renderFloor();renderWait();renderSelection();renderRecommendations();renderRoomBookings();showReadyAlert();
-  tableAssignment.refresh();
+  tableAssignment.refresh();team.refresh();
   // Keep unsaved layout fields intact while live state polls update the floor.
 }
 
@@ -691,6 +693,7 @@ $('location').onchange=async()=>{combining=false;locationId=$('location').value;
 $('live-tab').onclick=()=>{editing=false;tableDraft=null;setScreen('floor');};$('edit-tab').onclick=()=>{combining=false;$('app').classList.remove('phone-menu-open');closeSidebar();activeScreen='floor';editing=!editing;partyId=null;tableDraft=null;selected.clear();render();if(editing)toast('Select a table to edit its capacity, chairs, or allowed combinations.');};
 $('phone-floor').onclick=()=>{editing=false;setScreen('floor');};$('phone-wait').onclick=()=>openWaitlist();
 const partyDisplayButton=el('button',{id:'party-display-addon'},'Party Display add-on');
+const team=createTeam({getContext:()=>({state,locationId,locationName:locations.find(l=>l.id===locationId)?.name||'',canWrite:canWrite(),canEdit:canEdit(),partyId,ids:[...selected],label}),save:act,toast,openFloor:task=>{partyId=task.partyId;selected=new Set(task.ids);setScreen('floor');render();showSidebar('details');}});
 $('app-settings-dialog').append(partyDisplayButton);
 partyDisplayButton.onclick=()=>{if(!state)return;openPartyDisplayAddon({getState:()=>state,locationId,canEdit:canEdit(),save:act,demo});};
 const storeSettingsButton=el('button',{id:'store-settings'},'Manage stores');
@@ -781,7 +784,7 @@ $('staff-open').onclick=async()=>{
 $('demo-reset').onclick=()=>{localStorage.removeItem('seating-preview');selected.clear();partyId=null;refresh(true);};
 const syncSchedule=adaptiveSync();let lastDiningMinute=-1;
 function pollFloor(){if(!document.hidden&&locationId&&syncSchedule.due(Date.now(),runtime.mode))refresh();}
-setInterval(()=>{if(document.hidden)return;renderConnection();const minute=Math.floor(Date.now()/60000);if(state&&!editing&&activeScreen==='floor'&&minute!==lastDiningMinute){lastDiningMinute=minute;renderFloor();renderSelection();}pollFloor();},1000);
+setInterval(()=>{if(document.hidden)return;renderConnection();team.refresh();const minute=Math.floor(Date.now()/60000);if(state&&!editing&&activeScreen==='floor'&&minute!==lastDiningMinute){lastDiningMinute=minute;renderFloor();renderSelection();}pollFloor();},1000);
 for(const event of ['pointerdown','keydown','wheel'])document.addEventListener(event,()=>{if(document.hidden)return;if(syncSchedule.activity())pollFloor();},{passive:true});
 $('overview-full').onclick=()=>setView('All');
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){syncSchedule.resume();syncSchedule.due(Date.now(),runtime.mode);refresh(true);}});

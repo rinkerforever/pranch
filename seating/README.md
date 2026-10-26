@@ -10,6 +10,14 @@ Independent Cloudflare Worker for `seating.projectaimnet.com`. Reuses the existi
 
 ## Features
 
+### Optional team communication
+
+Managers can enable **Settings → Team communication** separately for each location (off by default) and enter a short staff-name list. On each tablet, open **Team → Choose my name**, optionally label the tablet (Front door, Floor, etc.), and tap a name. Assignments last 12 hours; tapping a name renews its shift and moves that person from any previous tablet. Names are shift labels, not authentication or new access grants.
+
+The Team drawer offers help at the door, cleanup, high-chair requests, and seating handoffs for the selected party/tables. Send to anyone or an assigned teammate. Recipients tap **I’ve got it**, return a request to the team, or finish it. Seating and cleanup open the existing floor controls and complete the request only when the party is seated or the tables are actually open. Accepting a handoff does not reserve a table. The Team count indicates outstanding incoming work; brief notifications report new requests and status changes. Tablet assignments indicate who claimed a tablet, not whether it is currently online.
+
+Requests use the same location state, authorization, version checks, polling and cloud/Pi authority as seating. Writes are unavailable without that authority connection; there is no offline message queue or background push notification. Pending work expires after 12 hours and old records are pruned on subsequent writes. Switching/ending a shift returns accepted work to the team. Disabling the feature clears its requests and assignments. All tablets and a paired Pi must run the updated version before enabling it.
+
 - 68 tables/booths transcribed from the supplied PDF, with individually rendered chairs and area-qualified table IDs.
 - Full plan, dining room, section, and party room views; zoom and pan.
 - Booth capacity is deliberately unset until a manager confirms it. The PDF's two-seat tables 10/11/12 on the left of the C/B divider belong to C; the booth 10 in the bottom row belongs to B.
