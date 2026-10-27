@@ -1,5 +1,6 @@
 import {openClosingManager} from './closing-manager.js';
 import {createTeam} from './team.js';
+import {combineToolbar,needsCombinationOverride} from './combine-toolbar.js';
 import {rotateFloorBox,rotateFloorPoint,floorAngle,floorTransform} from './floor-rotation.js';
 import {diningProgress} from './dining-progress.js';
 import {createTableAssignment} from './table-assignment.js';
@@ -144,7 +145,7 @@ async function act(action){
     state=presetCombinations(upgradeNumbering(data.state));version=data.version;if(demo)localStorage.setItem('seating-preview',JSON.stringify(state));
     if(action.type==='seat'||action.type==='seatNow'||action.type==='cancelParty')partyId=null;
     selected=new Set([...selected].filter(id=>!releasedTables.includes(id)&&state.tables.some(t=>t.id===id)));
-    if(['status','seat','seatNow','combine','reassign'].includes(action.type)){selected.clear();combining=false;closeSidebar();}
+    if(['status','seat','seatNow','combine','split','reassign'].includes(action.type)){selected.clear();combining=false;closeSidebar();}
     lastConnectionConfirmed=Date.now();seatingReachable=true;render();connectionStatus();showReadyAlert();return true;
   }catch(e){toast(e.message,true);sync(false,'Change not saved');if(e.status===409){busy=false;await refresh(true);}if(e.status===401){$('app').hidden=true;$('login').hidden=false;}if(e.status===403){busy=false;await recoverLocationAccess();}return false;}finally{busy=false;$('location').disabled=false;}
 }
@@ -261,9 +262,11 @@ function renderFloor(){
   $('seat-count-note').textContent=seats.unconfirmed?`${seats.unconfirmed} open booths/tables need a capacity; excluded from seat count.`:'';
   $('combine-select').hidden=editing||!canWrite();$('combine-cancel').hidden=!combining||editing;
   $('combine-select').setAttribute('aria-pressed',String(combining));
-  $('combine-select').textContent=combining?(selected.size>=2?`Review (${selected.size})`:'Choose 2+ tables'):'Combine tables';
-  $('combine-select').disabled=combining&&selected.size<2;
-  $('selection-hint').textContent=combining?'Tap open tables, then Review to combine.':selected.size?`${selected.size} table${selected.size===1?'':'s'} selected`:'Tap a table to select it';
+  const combineControl=combineToolbar(state,[...selected],combining);
+  $('combine-select').textContent=combineControl.label;
+  $('combine-select').disabled=combineControl.disabled;
+  $('combine-select').title=combineControl.action==='split'&&combineControl.disabled?'Clear the seated party before un-combining tables.':'';
+  $('selection-hint').textContent=combining?'Select open tables, then tap Apply.':selected.size?`${selected.size} table${selected.size===1?'':'s'} selected`:'Tap a table to select it';
   $('plan-note').textContent=state.background?`Uploaded plan: ${state.background.name}. Review seats and table positions in Layout editor.`:'Chair counts follow your PDF. Booth capacities remain unconfirmed until set in Layout editor.';
   $('reassign-open').hidden=!canWrite()||!current().length||current().some(t=>t.status!=='in_use'||t.roomBlock);
   const away=current().length>0&&current().every(t=>t.funZone);const fun=$('funzone-toggle');fun.hidden=editing||!canWrite()||!current().length||current().some(t=>t.status!=='in_use');fun.textContent=away?'Back from FunZone':'In FunZone';fun.setAttribute('aria-pressed',String(away));
@@ -316,13 +319,12 @@ function renderGuestQuote(){
  const basis=`${plan.settings.diningMinutes} min dining + ${plan.settings.cleaningMinutes} min cleaning · ${plan.settings.source}${plan.settings.sampleCount?' · '+plan.settings.sampleCount+' completed visits':''}.`;
  $('guest-estimate').textContent=(seatNowMode?'':editGuest&&!estimate?'Updated estimate appears after saving. ':`Estimated wait: ${waitRange(estimate)}. `)+basis+(preferences.accessibility&&preferredAreas(state).size===0?' No preferred areas configured yet; confirm suitable seating with the guest.':'');
  if(!seatNowMode)return;
- const options=seatingOptions(plan,size,{...preferences,selectedIds:[...selected]}),previous=$('seat-now-options').querySelector('input:checked')?.value;
+ const options=seatingOptions(plan,size,{...preferences,selectedIds:[...selected]}),previous=$('seat-now-options').querySelector('select')?.value;
  const keepPrevious=options.open.some(o=>JSON.stringify(o.tables.map(t=>t.id))===previous);
- $('seat-now-options').replaceChildren(...options.open.map((option,i)=>{
-  const row=el('label',{class:'seat-now-option'}),radio=el('input',{type:'radio',name:'seat-now-table',value:JSON.stringify(option.tables.map(t=>t.id))}),text=el('span');
-  radio.checked=keepPrevious?previous===radio.value:i===0;
-  text.append(el('strong',{},option.tables.map(label).join(' + ')),el('small',{},`${option.selectedOnFloor?'Selected on floor · ':''}${option.capacity} seats · ${option.accessiblePreferred?'Accessibility-preferred area · ':''}${includesBoothCombination(option.tables)?'Includes booth · confirm fit':'Open now'}`));row.append(radio,text);return row;
- }));
+ const tableChoice=el('select',{'aria-label':'Suggested table for Seat now'});
+ for(const option of options.open)tableChoice.append(new Option(`${option.tables.map(label).join(' + ')} · ${option.capacity} seats${option.selectedOnFloor?' · Selected on floor':''}${option.accessiblePreferred?' · Accessible area':''}${includesBoothCombination(option.tables)?' · Booth combination':''}`,JSON.stringify(option.tables.map(t=>t.id))));
+ if(keepPrevious)tableChoice.value=previous;tableChoice.disabled=!options.open.length;
+ $('seat-now-options').replaceChildren(tableChoice);
  if(selected.size&&!options.open.some(o=>o.selectedOnFloor))$('seat-now-options').prepend(el('p',{class:'muted'},'Your floor selection is not available for this party size after the current waitlist and bookings. Choose another option below, or choose an existing waiting party above.'));
  if(!options.open.length)$('seat-now-options').append(el('p',{class:'empty'},'No suitable open table after the current queue. Add this party to the waitlist or adjust the party size.'));
  $('guest-save').disabled=!canWrite()||!options.open.length;
@@ -487,7 +489,11 @@ function renderRecommendations(){
   if(planned?.ready){const key=ts=>ts.map(t=>t.id).sort().join('|'),index=candidates.findIndex(ts=>key(ts)===key(planned.tables));if(index>=0)candidates.splice(index,1);candidates.unshift(planned.tables);}
   candidates.push(...state.tables.filter(t=>t.status==='open'&&!t.group&&childBoothFit([t],party.size)).slice(0,2).map(t=>[t]));
   candidates=preferDiningTables(candidates,partyRoomAreas(state));
-  $('recommendations').replaceChildren(...candidates.map(ts=>{const b=el('button',{class:'suggestion'}),info=el('span');info.append(el('strong',{},ts.map(label).join(' + ')),el('small',{},`${ts.reduce((n,t)=>n+t.capacity,0)} seats · ${childBoothFit(ts,party.size)?'Small-child override required':includesBoothCombination(ts)?'Booth + table · confirm fit':ts.length>1?'Nearby combination':'Open table'}`));b.append(info,el('span',{},'→'));b.onclick=()=>{combining=false;selected=new Set(ts.map(t=>t.id));renderFloor();renderSelection();showSidebar('details');focusTables(ts);};return b;}));
+  const choices=el('select',{'aria-label':'Suggested seating tables'});choices.append(new Option('Choose a suggested table…',''));
+  for(const ts of candidates)choices.append(new Option(`${ts.map(label).join(' + ')} · ${ts.reduce((n,t)=>n+t.capacity,0)} seats${childBoothFit(ts,party.size)?' · Child override required':includesBoothCombination(ts)?' · Booth combination':''}`,JSON.stringify(ts.map(t=>t.id))));
+  const matching=candidates.find(ts=>ts.length===selected.size&&ts.every(t=>selected.has(t.id)));if(matching)choices.value=JSON.stringify(matching.map(t=>t.id));
+  choices.disabled=!candidates.length;choices.onchange=()=>{if(!choices.value)return;const ids=JSON.parse(choices.value),ts=state.tables.filter(t=>ids.includes(t.id));combining=false;selected=new Set(ids);renderFloor();renderSelection();showSidebar('details');focusTables(ts);};
+  $('recommendations').replaceChildren(choices);
   if(planned&&!planned.ready)$('recommendations').append(el('p',{class:'estimate-note'},`Expected next: ${planned.tables.map(label).join(' + ')} · ${waitRange(planned)}${planned.accessiblePreferred?' · Accessibility preferred':''}. Host must confirm the table is clear.`));
   if(!candidates.length)$('recommendations').append(el('p',{class:'empty'},'No available fit. A manager can confirm booth capacities or approve table combinations in Layout editor.'));
 }
@@ -701,6 +707,8 @@ $('location').onchange=async()=>{combining=false;locationId=$('location').value;
 $('live-tab').onclick=()=>{editing=false;tableDraft=null;setScreen('floor');};$('edit-tab').onclick=()=>{combining=false;$('app').classList.remove('phone-menu-open');closeSidebar();activeScreen='floor';editing=!editing;partyId=null;tableDraft=null;selected.clear();render();if(editing)toast('Select a table to edit its capacity, chairs, or allowed combinations.');};
 $('phone-floor').onclick=()=>{editing=false;setScreen('floor');};$('phone-wait').onclick=()=>openWaitlist();
 const partyDisplayButton=el('button',{id:'party-display-addon'},'Party Display add-on');
+const seatForecastDetails=el('details',{class:'seat-forecast-details'}),seatForecastSummary=el('summary',{},'Expected next');
+$('seat-now-soon').previousElementSibling.replaceWith(seatForecastDetails);seatForecastDetails.append(seatForecastSummary,$('seat-now-soon'));
 const team=createTeam({getContext:()=>({state,locationId,locationName:locations.find(l=>l.id===locationId)?.name||'',canWrite:canWrite(),canEdit:canEdit(),partyId,ids:[...selected],label}),save:act,toast,openFloor:task=>{partyId=state.parties.some(p=>p.id===task.partyId&&p.status==='waiting')?task.partyId:null;selected=new Set(task.ids);editing=false;setScreen('floor');render();const tables=current();if(tables.length)focusTables(tables);showSidebar('details');}});
 $('app-settings-dialog').append(partyDisplayButton);
 partyDisplayButton.onclick=()=>{if(!state)return;openPartyDisplayAddon({getState:()=>state,locationId,canEdit:canEdit(),save:act,demo});};
@@ -713,7 +721,17 @@ $('phone-bookings').onclick=()=>openRoomBookings();
 $('app-settings-dialog').addEventListener('click',e=>{if(e.target.closest('button:not(.close-dialog)'))$('app-settings-dialog').close();});
 $('tablet-details').onclick=()=>showSidebar('details');$('sidebar-close').onclick=closeSidebar;
 $('add-guest').onclick=()=>openGuest();$('clear-selection').onclick=()=>{selected.clear();renderFloor();renderSelection();};
-$('combine-select').onclick=()=>{if(busy||!canWrite())return;if(combining){if(selected.size>=2)showSidebar('details');return;}combining=true;selected.clear();closeSidebar();renderFloor();renderSelection();toast('Tap the open tables you want to combine, then tap Review.');};
+$('combine-select').onclick=async()=>{
+ if(busy||!canWrite())return;
+ const control=combineToolbar(state,[...selected],combining);if(control.disabled)return;
+ if(control.action==='start'){combining=true;partyId=null;selected.clear();closeSidebar();renderFloor();renderSelection();toast('Select open tables, then tap Apply.');return;}
+ const ids=[...selected],tables=current(),chosenLocation=locationId;
+ if(control.action==='split'){if(await act({type:'split',ids}))toast('Tables un-combined.');return;}
+ const combinationOverride=needsCombinationOverride(tables,state.tables),boothAcknowledged=includesBoothCombination(tables);
+ if((combinationOverride||boothAcknowledged)&&!await confirmChange('Confirm table combination',`Combine ${tables.map(label).join(' + ')}? ${combinationOverride?'This is outside the approved combinations. ':''}${boothAcknowledged?'Includes a fixed booth. ':''}Confirm the tables fit together and leave the aisle clear.`))return;
+ if(locationId!==chosenLocation)return;
+ if(await act({type:'combine',ids,combinationOverride,boothAcknowledged}))toast('Tables combined.');
+};
 $('combine-cancel').onclick=()=>{combining=false;selected.clear();closeSidebar();renderFloor();renderSelection();};
 $('seat-now-open').onclick=()=>{
  if(!canWrite()||busy)return;
@@ -736,7 +754,7 @@ $('guest-form').onsubmit=async e=>{
  const action={type:seatNowMode?'seatNow':editGuest?'editParty':'addParty',id:editGuest,name:$('guest-name').value,size:Number($('guest-size').value),notes:$('guest-notes').value,highChair:$('guest-highchair').checked,booster:$('guest-booster').checked,accessibility:$('guest-accessibility').checked};
  if(seatNowMode){
   Object.assign(action,team.seatingAssignment('guest-team-assignment'));
-  const checked=$('seat-now-options').querySelector('input:checked');if(!checked){toast('Choose an open table first.',true);return;}
+  const checked=$('seat-now-options').querySelector('select');if(!checked?.value){toast('Choose an open table first.',true);return;}
   action.ids=JSON.parse(checked.value);const tables=state.tables.filter(t=>action.ids.includes(t.id));action.boothAcknowledged=includesBoothCombination(tables);
   if(action.boothAcknowledged&&!await confirmChange('Confirm booth combination','This includes a fixed booth. Confirm the fit and clear aisle before seating.'))return;
  }

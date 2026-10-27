@@ -292,6 +292,8 @@
 .team-choices button{min-height:44px}
 .team-request{padding:14px 0;border-top:1px solid #cbd5cc}
 .team-panel select,.team-panel label{width:100%}
+#seat-now-options{display:block;margin:8px 0}#seat-now-options select,#recommendations select{min-height:44px;width:100%;font-size:14px}
+.seat-forecast-details{margin:10px 0}.seat-forecast-details summary{min-height:44px;padding:12px 0;cursor:pointer;font-size:13px;font-weight:600}
 .team-assignment-ring{display:none;fill:none;stroke:#783bc1;stroke-width:4;stroke-dasharray:9 5;vector-effect:non-scaling-stroke}
 .team-seat-target .team-assignment-ring{display:block}
 .team-seating-guidance{background:#f3eafa;border:2px solid #783bc1;border-radius:10px;padding:10px 14px;margin-bottom:10px;color:#36214c}
