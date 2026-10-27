@@ -294,6 +294,21 @@
 .team-panel select,.team-panel label{width:100%}
 #seat-now-options{display:block;margin:8px 0}#seat-now-options select,#recommendations select{min-height:44px;width:100%;font-size:14px}
 .seat-forecast-details{margin:10px 0}.seat-forecast-details summary{min-height:44px;padding:12px 0;cursor:pointer;font-size:13px;font-weight:600}
+/* Keep the Seat now decision and actions together on a tablet. */
+#guest-dialog.seat-now-mode{width:min(760px,calc(100vw - 24px));max-width:760px;padding:16px 20px;max-height:calc(100dvh - 20px)}
+.seat-now-mode #guest-form{display:grid;grid-template-columns:1fr 1fr;gap:9px 12px}
+.seat-now-mode #guest-form>.panel-title,.seat-now-mode #guest-form>.seat-now-existing,.seat-now-mode #guest-form>.party-size-picker,.seat-now-mode #guest-form>.equipment-options,.seat-now-mode #guest-form>#seat-now-panel,.seat-now-mode #guest-form>#guest-estimate,.seat-now-mode #guest-form>label:has(#guest-notes){grid-column:1/-1}
+.seat-now-mode .seat-now-existing{padding:8px 10px}.seat-now-mode .seat-now-existing p{display:none}
+.seat-now-mode .party-size-buttons{grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}.seat-now-mode .party-size-buttons button[data-size=custom]{grid-column:auto}.seat-now-mode .party-size-buttons button{min-height:40px;padding:5px;font-size:16px}
+.seat-now-mode #guest-estimate{font-size:11px;line-height:1.3}.seat-now-mode #seat-now-panel h3{font-size:14px;margin:7px 0 3px}.seat-now-mode #seat-now-panel>.muted{font-size:11px;line-height:1.3}
+.seat-now-mode #seat-now-options{margin:5px 0}.seat-now-mode .seat-forecast-details{margin:2px 0}.seat-now-mode .seat-forecast-details summary{padding:9px 0}
+.seat-now-mode #guest-notes{min-height:44px;height:44px}.seat-now-mode #guest-save,.seat-now-mode #seat-now-wait{min-height:44px;position:sticky;bottom:0;z-index:1}
+.seat-now-mode #guest-form:has(.seat-now-existing:not([hidden]))>.seat-now-existing{grid-column:1}.seat-now-mode #guest-form:has(.seat-now-existing:not([hidden]))>label:has(#guest-name){grid-column:2}
+.seat-now-mode #seat-now-panel:has(#guest-team-assignment:not([hidden])){display:grid;grid-template-columns:1fr 1fr;column-gap:12px;align-items:start}
+.seat-now-mode #seat-now-panel:has(#guest-team-assignment:not([hidden]))>#guest-team-assignment{grid-column:1;grid-row:1/4}
+.seat-now-mode #seat-now-panel:has(#guest-team-assignment:not([hidden]))>h3,.seat-now-mode #seat-now-panel:has(#guest-team-assignment:not([hidden]))>.muted,.seat-now-mode #seat-now-panel:has(#guest-team-assignment:not([hidden]))>#seat-now-options{grid-column:2}
+.seat-now-mode #seat-now-panel:has(#guest-team-assignment:not([hidden]))>.seat-forecast-details{grid-column:1/-1}
+@media(max-width:599px){.seat-now-mode #guest-form{grid-template-columns:1fr;gap:8px}.seat-now-mode #guest-form>*,.seat-now-mode #guest-form:has(.seat-now-existing:not([hidden]))>.seat-now-existing,.seat-now-mode #guest-form:has(.seat-now-existing:not([hidden]))>label:has(#guest-name){grid-column:1/-1}.seat-now-mode .party-size-buttons{grid-template-columns:repeat(7,minmax(0,1fr))}.seat-now-mode .party-size-buttons button{font-size:14px;min-height:40px}#guest-dialog.seat-now-mode{padding:12px}.seat-now-mode #seat-now-panel:has(#guest-team-assignment:not([hidden])){display:block}}
 .team-assignment-ring{display:none;fill:none;stroke:#783bc1;stroke-width:4;stroke-dasharray:9 5;vector-effect:non-scaling-stroke}
 .team-seat-target .team-assignment-ring{display:block}
 .team-seating-guidance{background:#f3eafa;border:2px solid #783bc1;border-radius:10px;padding:10px 14px;margin-bottom:10px;color:#36214c}

@@ -671,15 +671,16 @@ function openGuest(p=null,immediate=false){
   $('guest-title').closest('.panel-title').after(waitChoice);
   select.onchange=()=>{const waiting=state.parties.find(p=>p.id===select.value&&p.status==='waiting');if(!waiting||waiting.attendance==='away')return;const tables=current().filter(t=>t.status==='open');$('guest-dialog').close();seatNowMode=false;chooseWaitingParty(waiting,tables);toast(tables.length?'Confirm the selected tables, then seat this waiting party.':'Choose a suggested table or tap tables on the floor.');};
  }
- waitChoice.hidden=!seatNowMode;
+ const seatableParties=state.parties.filter(p=>p.status==='waiting'&&p.attendance!=='away');
+ waitChoice.hidden=!seatNowMode||!seatableParties.length;
  const waitingSelect=waitChoice.querySelector('select');
- waitingSelect.replaceChildren(new Option('Select a waiting party…',''),...state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt).map(p=>{const option=new Option(`${p.name} · ${p.size} guests · ${minutes(p.arrivedAt)} min${p.attendance==='away'?' · Away':''}`,p.id);option.disabled=p.attendance==='away';return option;}));
- waitingSelect.disabled=waitingSelect.options.length===1;
+ waitingSelect.replaceChildren(new Option('Select a waiting party…',''),...seatableParties.sort((a,b)=>a.arrivedAt-b.arrivedAt).map(p=>new Option(`${p.name} · ${p.size} guests · ${minutes(p.arrivedAt)} min`,p.id)));
  $('guest-title').textContent=p?'Edit waiting party':seatNowMode?'Seat guests now':'Add guests';
  $('guest-name').value=p?.name||'';$('guest-name').required=!seatNowMode;$('guest-name').placeholder=seatNowMode?'Walk-in (name optional)':'';
  $('guest-size').value=p?.size||2;$('guest-notes').value=p?.notes||'';$('guest-highchair').checked=!!p?.highChair;$('guest-booster').checked=!!p?.booster;$('guest-accessibility').checked=!!p?.accessibility;
  updatePartySizePicker(Number($('guest-size').value)>12);
  $('guest-team-assignment')?.remove();$('seat-now-panel').prepend(team.seatingPicker('guest-team-assignment'));
+ $('guest-dialog').classList.toggle('seat-now-mode',seatNowMode);
  $('guest-save').textContent=seatNowMode?'Seat at selected table':'Save to waiting list';$('guest-save').disabled=false;$('seat-now-panel').hidden=!seatNowMode;$('seat-now-wait').hidden=!seatNowMode;$('seat-now-options').replaceChildren();renderGuestQuote();$('guest-dialog').showModal();$('guest-title').focus();
 }
 function pinKey(key){
