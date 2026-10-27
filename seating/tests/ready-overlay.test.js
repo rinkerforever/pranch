@@ -20,6 +20,7 @@ test('media worker delivers the wrapper only when enabled and limits frame permi
  state=applyAction(state,{type:'readyOverlaySettings',enabled:false},'manager');
  data=await(await mediaWorker.fetch(request(),env)).json();assert.ok(data.pages.menu_url.startsWith('https://green-forest-'));
  response=await mediaWorker.fetch(new Request('https://media.test/ready-display.html'),env);assert.match(response.headers.get('content-security-policy'),/frame-src https:/);
+ response=await mediaWorker.fetch(new Request('https://media.test/ready-display'),env);assert.match(response.headers.get('content-security-policy'),/frame-src https:/);
  response=await mediaWorker.fetch(new Request('https://media.test/'),env);assert.doesNotMatch(response.headers.get('content-security-policy'),/frame-src https:/);
 });
 test('overlay defaults off, requires a manager, preserves enabled keys and revokes on disable',()=>{

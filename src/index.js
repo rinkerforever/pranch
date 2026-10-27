@@ -721,7 +721,7 @@ export default {
       else response = await env.ASSETS.fetch(request);
       const headers = new Headers(response.headers);
       for (const [key, value] of Object.entries(securityHeaders)) headers.set(key, value);
-      if (url.pathname === '/ready-display.html') headers.set('content-security-policy',securityHeaders['content-security-policy'] + '; frame-src https:');
+      if (['/ready-display','/ready-display.html'].includes(url.pathname)) headers.set('content-security-policy',securityHeaders['content-security-policy'] + '; frame-src https:');
       return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
     } catch (error) {
       console.error(error);
