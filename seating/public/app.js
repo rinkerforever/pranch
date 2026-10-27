@@ -1,6 +1,7 @@
 import {openClosingManager} from './closing-manager.js';
 import {createTeam} from './team.js';
 import {combineToolbar,isWholeCombination,needsCombinationOverride} from './combine-toolbar.js';
+import {selectTablesForParty} from './seating-selection.js';
 import {rotateFloorBox,rotateFloorPoint,floorAngle,floorTransform} from './floor-rotation.js';
 import {diningProgress} from './dining-progress.js';
 import {createTableAssignment} from './table-assignment.js';
@@ -164,7 +165,8 @@ function chooseTable(t){
   const group=groupTables(t),remove=group.every(o=>selected.has(o.id));
   if(combining||partyId){
     if(group.some(o=>o.status!=='open')){toast('Choose open tables to combine.');return;}
-    for(const o of group){if(remove)selected.delete(o.id);else selected.add(o.id);}
+    if(partyId&&!combining){const party=state.parties.find(p=>p.id===partyId&&p.status==='waiting');selected=selectTablesForParty(state.tables,selected,t.id,party?.size||Infinity);}
+    else for(const o of group){if(remove)selected.delete(o.id);else selected.add(o.id);}
   }else{selected=remove?new Set():new Set(group.map(o=>o.id));if(partyId)showSidebar('details');else{closeSidebar();if(!remove&&view==='All'){view=t.area;viewFitted=true;viewBox=importedViewBox(view);renderAreas();}}}
   if(partyId&&!remove&&view==='All'&&group.length)focusTables(group);
   else renderFloor();
@@ -429,7 +431,7 @@ function renderSelection(){
   if(tables.some(t=>areaClosed(state,t.area)))box.append(el('p',{class:'read-only-note'},'Section closed to new seating. Reopen it in Sections.'));
   if(party?.attendance==='away')box.append(el('p',{class:'read-only-note'},'Guest not present. Return them to waiting from the waitlist before seating.'));
   if(party){
-   box.append(el('p',{class:'muted'},`${party.size} guests · Tap tables on the floor to add or remove them from your selection.`));
+   box.append(el('p',{class:'muted'},`${party.size} guests · Tap tables to add seats. Once enough seats are selected, tap another table to start a new choice.`));
    const clear=el('button',{class:'small'},'Clear selected tables');clear.disabled=!tables.length;clear.onclick=()=>{selected.clear();renderFloor();renderSelection();};box.append(clear);
    const choices=el('div',{class:'actions'});
    for(const t of tables){const remove=el('button',{class:'small'},`Remove ${label(t)}`);remove.onclick=()=>chooseTable(t);choices.append(remove);}box.append(choices);

@@ -14,6 +14,7 @@ assets.push('room-display.html','room-display.js','room-display.css','room-displ
 assets.push('store-settings.js');
 assets.push('team.js','team-state.js');
 assets.push('combine-toolbar.js');
+assets.push('seating-selection.js');
 assets.push('table-assignment.js','floor-rotation.js','closing-manager.js');
 assets.push('funzone.html','funzone.js','funzone.css','funzone-sign.html','funzone-sign.js');
 const hash=createHash('sha256');for(const name of assets)hash.update(await readFile(new URL('../public/'+name,import.meta.url)));
