@@ -15,7 +15,8 @@ import {readyTracker} from './ready-alert.js';
 import {adaptiveSync} from './adaptive-sync.js';
 import {connectionIndicator} from './connection-indicator.js';
 import {installApp,runtimeInfo,pairLocalServer,layoutSettings} from './device.js';
-import {roomInfo,activeRoomBlocks,scheduledRooms,walkInTables} from './rooms.js';
+import {roomInfo,activeRoomBlocks,scheduledRooms,walkInTables,partyRoomSuggestions,roomSeatingCheck} from './rooms.js';
+import {openRoomSeating,roomWarning} from './room-seating.js';
 import {partyDisplayUrl,openPartyDisplayAddon} from './party-display-addon.js';
 import {openReadyOverlaySettings} from './ready-overlay-settings.js';
 import {planWaitlist,estimateNewParty,seatingOptions,waitRange,waitSettings} from './wait-plan.js';
@@ -325,14 +326,19 @@ function renderGuestQuote(){
  $('guest-estimate').textContent=(seatNowMode?'':editGuest&&!estimate?'Updated estimate appears after saving. ':`Estimated wait: ${waitRange(estimate)}. `)+basis+(preferences.accessibility&&preferredAreas(state).size===0?' No preferred areas configured yet; confirm suitable seating with the guest.':'');
  if(!seatNowMode)return;
  const options=seatingOptions(plan,size,{...preferences,selectedIds:[...selected]}),previous=$('seat-now-options').querySelector('select')?.value;
- const keepPrevious=options.open.some(o=>JSON.stringify(o.tables.map(t=>t.id))===previous);
+ const roomChoices=partyRoomSuggestions(state,size);
+ const keepPrevious=options.open.some(o=>JSON.stringify(o.tables.map(t=>t.id))===previous)||roomChoices.some(o=>'room:'+o.room.id===previous);
  const tableChoice=el('select',{'aria-label':'Suggested table for Seat now'});
  for(const option of options.open)tableChoice.append(new Option(`${option.tables.map(label).join(' + ')} · ${option.capacity} seats${option.selectedOnFloor?' · Selected on floor':''}${option.accessiblePreferred?' · Accessible area':''}${includesBoothCombination(option.tables)?' · Booth combination':''}`,JSON.stringify(option.tables.map(t=>t.id))));
- if(keepPrevious)tableChoice.value=previous;tableChoice.disabled=!options.open.length;
+ for(const option of roomChoices)tableChoice.append(new Option(`Whole ${option.room.name} · ${option.room.capacity} seats${option.warnings.length?' · Booking within 90 min':''}`,'room:'+option.room.id));
+ if(keepPrevious)tableChoice.value=previous;tableChoice.disabled=!options.open.length&&!roomChoices.length;
  $('seat-now-options').replaceChildren(tableChoice);
+ const roomNotice=el('p',{class:'muted'});
+ const updateRoomChoice=()=>{const choice=roomChoices.find(o=>'room:'+o.room.id===tableChoice.value);$('guest-save').textContent=choice?'Seat whole room':'Seat at selected table';roomNotice.hidden=!choice;roomNotice.textContent=choice?`All ${choice.room.tables.length} tables will be assigned.${choice.warnings.length?' WARNING: '+roomWarning(choice)+'. Booking within 90 minutes; confirmation required to continue.':''}`:'';};
+ tableChoice.onchange=updateRoomChoice;$('seat-now-options').append(roomNotice);updateRoomChoice();
  if(selected.size&&!options.open.some(o=>o.selectedOnFloor))$('seat-now-options').prepend(el('p',{class:'muted'},'Your floor selection is not available for this party size after the current waitlist and bookings. Choose another option below, or choose an existing waiting party above.'));
- if(!options.open.length)$('seat-now-options').append(el('p',{class:'empty'},'No suitable open table after the current queue. Add this party to the waitlist or adjust the party size.'));
- $('guest-save').disabled=!canWrite()||!options.open.length;
+ if(!options.open.length&&!roomChoices.length)$('seat-now-options').append(el('p',{class:'empty'},'No suitable open table after the current queue. Add this party to the waitlist or adjust the party size.'));
+ $('guest-save').disabled=!canWrite()||(!options.open.length&&!roomChoices.length);
  $('seat-now-soon').replaceChildren(...options.soon.map(option=>{
   const row=el('p',{class:'forecast-option'}),occupied=option.tables.map(t=>state.tables.find(o=>o.id===t.id)).filter(t=>t?.status==='in_use'&&t.seatedAt),elapsed=occupied.length?Math.round(Math.max(...occupied.map(t=>(Date.now()-t.seatedAt)/60000))):null;
   row.append(el('strong',{},option.tables.map(label).join(' + ')),el('span',{},` · ${waitRange(option)}${option.accessiblePreferred?' · Accessibility preferred':''}${elapsed!==null?' · Current guests seated '+elapsed+' min':''}`));return row;
@@ -372,6 +378,7 @@ function renderWaitlistView(){
   table.append(el('small',{},delayReason(p,estimate)));
   const button=el('button',{class:estimate?.ready?'primary small':'small'},estimate?.ready?'Review & seat':'View options');button.onclick=()=>chooseWaitingParty(p,estimate?.ready?estimate.tables:[]);action.append(button);
   if(canWrite()){
+   if(p.attendance!=='away'&&partyRoomSuggestions(state,p.size,now).length){const roomButton=el('button',{class:'small'},'Seat whole room');roomButton.onclick=()=>openSeatWholeRoom(p.id);action.append(roomButton);}
    for(const [contact,title] of p.attendance==='away'?[['waiting','Return to waiting']]:[['called',p.calledAt?'Call again':'Called'],['away','Not here']]){
     const contactButton=el('button',{class:'small'},title);contactButton.onclick=async()=>{if(contact==='away'&&!await confirmChange('Guest not present?',`Pause table planning for ${p.name}? Their original arrival time and quote stay saved. Return them to waiting when they arrive.`))return;await act({type:'partyContact',id:p.id,contact});};action.append(contactButton);
    }
@@ -398,26 +405,10 @@ const tableAssignment=createTableAssignment({
  },
  changeTables:(id,ids)=>{partyId=id;selected=new Set(ids);combining=true;closeSidebar();renderFloor();renderSelection();toast('Tap open tables to adjust the selection, then Review.');}
 });
-function openSeatWholeRoom(){
+function openSeatWholeRoom(chosenParty=partyId,roomId){
  if(!canWrite()||busy)return;
- const dialog=document.createElement('dialog');dialog.className='seat-room-dialog';
- dialog.innerHTML='<div class="panel-title"><h2>Seat a party room</h2><button type="button" class="quiet">Close</button></div><p>Seat a waiting party now. Every table in the selected room will be assigned to that party.</p><div class="room-seat-choices"></div><label>Waiting party<select class="room-seat-party"></select></label><label>Room time (minutes)<input class="room-seat-time" type="number" min="1" max="720" value="120"></label><p class="room-seat-info" role="status"></p><button class="primary wide room-seat-submit" disabled>Choose a room and party</button><p class="muted">Future reservations remain in Bookings. Current bookings, closed sections, and occupied tables must be cleared before seating.</p>';
- document.body.append(dialog);let chosen=null,saving=false;
- const choices=dialog.querySelector('.room-seat-choices'),guest=dialog.querySelector('select'),duration=dialog.querySelector('input'),info=dialog.querySelector('.room-seat-info'),save=dialog.querySelector('.room-seat-submit');
- dialog.querySelector('.quiet').onclick=()=>dialog.close();dialog.addEventListener('close',()=>dialog.remove(),{once:true});
- guest.append(new Option('Choose a waiting party',''),...state.parties.filter(p=>p.status==='waiting').sort((a,b)=>a.arrivedAt-b.arrivedAt).map(p=>new Option(`${p.name} · ${p.size} guests${p.attendance==='away'?' · Away':''}`,p.id)));
- const options=roomOptions(state).filter(r=>r.areas.length<=2);
- function update(){
-  const minutes=Number(duration.value),party=state.parties.find(p=>p.id===guest.value&&p.status==='waiting'),room=chosen&&roomInfo(state,chosen);
-  const conflict=room&&scheduledRooms(state).some(b=>b.areas.some(a=>room.areas.includes(a))&&b.startsAt<Date.now()+minutes*60000&&b.endsAt>Date.now());
-  const valid=room?.available&&!room.unconfirmed&&party&&party.attendance!=='away'&&party.size<=room.capacity&&Number.isInteger(minutes)&&minutes>=1&&minutes<=720&&!conflict;
-  choices.replaceChildren(...options.map(option=>{const r=roomInfo(state,option.id),b=el('button',{type:'button','aria-pressed':String(chosen===r.id),class:'room-seat-card'},`${r.name} · ${r.capacity} seats · ${r.available?'Open':'Unavailable'}`);b.disabled=saving;b.onclick=()=>{chosen=r.id;update();};return b;}));
-  info.textContent=!room?'Choose a room above.':!room.available?'All tables must be open and the section reopened before seating.':room.unconfirmed?'Confirm all table capacities first.':conflict?'This duration overlaps a future booking. Choose a shorter room time.':party?.attendance==='away'?'Return this guest to waiting first.':party&&party.size>room.capacity?'This party needs a larger room combination.':`${room.tables.length} tables will be seated together.${room.areas.length>1?' Confirm the divider is open and the rooms can serve one group.':''}`;
-  save.disabled=saving||!canWrite()||busy||!valid;save.textContent=valid?`Seat ${party.name} in ${room.name}`:'Choose an available room and party';
- }
- guest.onchange=duration.oninput=update;
- save.onclick=async()=>{update();if(save.disabled)return;const room=roomInfo(state,chosen),party=state.parties.find(p=>p.id===guest.value);if(!await confirmChange('Seat whole room?',`Seat ${party.name} in ${room.name} for ${duration.value} minutes? All ${room.tables.length} tables will be in use.${room.areas.length>1?' Confirm the divider is open.':''}`))return;saving=true;update();try{if(await act({type:'seatWholeRoom',roomId:chosen,partyId:guest.value,endsAt:Date.now()+Number(duration.value)*60000})){dialog.close();toast('Whole party seated. Use Bookings to finish and release the room.');}}finally{saving=false;if(dialog.open)update();}};
- dialog.showModal();update();
+ const atLocation=locationId;
+ openRoomSeating({getState:()=>state,canWrite:()=>canWrite()&&locationId===atLocation,save:act,confirm:confirmChange,partyId:typeof chosenParty==='string'?chosenParty:partyId,roomId});
 }
 const seatWholeRoomButton=el('button',{class:'primary'},'Seat room');seatWholeRoomButton.onclick=openSeatWholeRoom;$('combine-select').parentElement.prepend(seatWholeRoomButton);
 function renderSelection(){
@@ -499,6 +490,7 @@ function renderRecommendations(){
   const matching=candidates.find(ts=>ts.length===selected.size&&ts.every(t=>selected.has(t.id)));if(matching)choices.value=JSON.stringify(matching.map(t=>t.id));
   choices.disabled=!candidates.length;choices.onchange=()=>{if(!choices.value)return;const ids=JSON.parse(choices.value),ts=state.tables.filter(t=>ids.includes(t.id));combining=false;selected=new Set(ids);renderFloor();renderSelection();showSidebar('details');focusTables(ts);};
   $('recommendations').replaceChildren(choices);
+  if(party.attendance!=='away')for(const option of partyRoomSuggestions(state,party.size)){const b=el('button',{class:'small'},`Seat whole ${option.room.name} · ${option.room.capacity} seats${option.warnings.length?' · Booking within 90 min':''}`);b.disabled=!canWrite();b.onclick=()=>openSeatWholeRoom(party.id,option.room.id);$('recommendations').append(b);}
   if(planned&&!planned.ready)$('recommendations').append(el('p',{class:'estimate-note'},`Expected next: ${planned.tables.map(label).join(' + ')} · ${waitRange(planned)}${planned.accessiblePreferred?' · Accessibility preferred':''}. Host must confirm the table is clear.`));
   if(!candidates.length)$('recommendations').append(el('p',{class:'empty'},'No available fit. A manager can confirm booth capacities or approve table combinations in Layout editor.'));
 }
@@ -765,8 +757,16 @@ $('guest-form').onsubmit=async e=>{
  if(seatNowMode){
   Object.assign(action,team.seatingAssignment('guest-team-assignment'));
   const checked=$('seat-now-options').querySelector('select');if(!checked?.value){toast('Choose an open table first.',true);return;}
+  if(checked.value.startsWith('room:')){
+   const roomId=checked.value.slice(5),check=roomSeatingCheck(state,roomId,action.size);
+   if(!check.available){toast(check.reason,true);return;}
+   if(action.teamTarget){toast('Seat whole rooms directly; clear the teammate assignment first.',true);return;}
+   if(!await confirmChange(check.warnings.length?'Booking conflict — seat anyway?':'Seat whole room?',`Seat ${action.name||'Walk-in'}, party of ${action.size}, in ${check.room.name}? All ${check.room.tables.length} tables will be assigned.${check.warnings.length?' '+roomWarning(check)+'. Booking within 90 minutes; continue despite the conflict?':''}${check.room.areas.length>1?' Confirm the divider is open.':''}`))return;
+   Object.assign(action,{type:'seatWholeRoom',roomId,endsAt:Date.now()+90*60000,acknowledgedBookings:check.warnings.map(b=>b.id)});
+  }else{
   action.ids=JSON.parse(checked.value);const tables=state.tables.filter(t=>action.ids.includes(t.id));action.boothAcknowledged=includesBoothCombination(tables);
   if(action.boothAcknowledged&&!await confirmChange('Confirm booth combination','This includes a fixed booth. Confirm the fit and clear aisle before seating.'))return;
+  }
  }
  e.submitter.disabled=true;
  try{if(await act(action)){$('guest-dialog').close();toast(action.teamTarget?'Seating assigned to teammate; tables marked in use.':seatNowMode?'Party seated.':editGuest?'Party updated.':'Added to waiting list.');}}

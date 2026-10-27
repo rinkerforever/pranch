@@ -1,4 +1,4 @@
-import {roomInfo,activeRoomBlocks,scheduledRooms,roomConflict,protectsBooking} from '../public/rooms.js';
+import {roomInfo,activeRoomBlocks,scheduledRooms,roomConflict,protectsBooking,roomSeatingCheck} from '../public/rooms.js';
 import {areaOptions,roomCombinations} from '../public/areas.js';
 import {presetCombinations,includesBoothCombination,childBoothFit,withinCombinationDistance} from '../public/combinations.js';
 import { initialTables } from '../public/floor.js';
@@ -50,7 +50,7 @@ export function applyAction(original, action, role, now=Date.now(), uuid=()=>cry
  const delta=recordReport(original,state,action,now);if(state.lastUndo&&delta)state.lastUndo.reportDelta=delta;
  return state;
 }
-function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto.randomUUID()) {
+function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto.randomUUID(),roomOverride=false) {
   const state=structuredClone(original);
   const {type}=action;
   if(!['admin','manager','host'].includes(role)) throw new AppError('You have view-only access.',403);
@@ -70,8 +70,13 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     for(const t of cleared)Object.assign(t,{status:'open',party:null,group:null,roomBlock:null,seatedAt:null,cleaningAt:null,funZone:false,funZoneSince:null});
   }else if(type==='seatWholeRoom'){
 
-    if(!action.partyId)fail('Choose a waiting party.');
-    const held=applyActionCore(state,{type:'bookRoom',roomId:action.roomId,partyId:action.partyId,endsAt:action.endsAt},role,now,uuid);
+    if(!action.partyId&&!action.size)fail('Choose a waiting party.');
+    const party=action.partyId?state.parties.find(p=>p.id===action.partyId&&p.status==='waiting'):null;
+    const end=action.endsAt??now+90*60000,check=roomSeatingCheck(state,action.roomId,party?.size??Number(action.size),now,end);
+    if(!check.available)fail(check.reason);
+    if(check.warnings.some(b=>!Array.isArray(action.acknowledgedBookings)||!action.acknowledgedBookings.includes(b.id)))fail('A booking starts within 90 minutes. Review the conflict and confirm seating anyway.');
+    const held=applyActionCore(state,{...action,type:'bookRoom',endsAt:end,name:action.name||'Walk-in'},role,now,uuid,true);
+    if(check.warnings.length)held.roomBlocks.at(-1).bookingConflictAcknowledged={at:now,bookingIds:check.warnings.map(b=>b.id)};
     return applyActionCore(held,{type:'seatRoom',id:held.roomBlocks.at(-1).id},role,now,uuid);
   }else if(type==='readyOverlaySettings'){
     if(!['admin','manager'].includes(role))throw new AppError('Manager access required.',403);
@@ -171,7 +176,7 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     completeGroups(state,room.tables);
     const end=action.endsAt===undefined?now+120*60000:Number(action.endsAt);
     if(!Number.isFinite(end)||end<now+60000||end>now+12*3600000)fail('Choose a room release time within the next 12 hours.');
-    if(roomConflict(state,room.areas,now,end))fail('This hold would overlap a scheduled room booking. Choose an earlier release time.');
+    if(!roomOverride&&roomConflict(state,room.areas,now,end))fail('This hold would overlap a scheduled room booking. Choose an earlier release time.');
     let party=action.partyId?state.parties.find(p=>p.id===action.partyId&&p.status==='waiting'):null;
     if(action.partyId&&!party)fail('This party is no longer waiting.');
     if(party?.attendance==='away')fail('Return this guest to waiting before reserving a room.');
