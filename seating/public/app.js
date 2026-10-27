@@ -1,6 +1,6 @@
 import {openClosingManager} from './closing-manager.js';
 import {createTeam} from './team.js';
-import {combineToolbar,needsCombinationOverride} from './combine-toolbar.js';
+import {combineToolbar,isWholeCombination,needsCombinationOverride} from './combine-toolbar.js';
 import {rotateFloorBox,rotateFloorPoint,floorAngle,floorTransform} from './floor-rotation.js';
 import {diningProgress} from './dining-progress.js';
 import {createTableAssignment} from './table-assignment.js';
@@ -9,7 +9,7 @@ import {areaClosed,serviceTables,cleaningQueue,delayReason,undoAvailable,undoLab
 import {keyedChildren,floorImageUrl} from './render-cache.js';
 import {areaOptions,areaName,roomOptions,partyRoomAreas} from './areas.js';
 import {planImage,cleanUpPlan} from './plan-cleanup.js';
-import {drawingBounds,fullPlanBox,tableFocusBox} from './plan-fit.js';
+import {drawingBounds,fullPlanBox} from './plan-fit.js';
 import {readyTracker} from './ready-alert.js';
 import {adaptiveSync} from './adaptive-sync.js';
 import {connectionIndicator} from './connection-indicator.js';
@@ -166,7 +166,9 @@ function chooseTable(t){
     if(group.some(o=>o.status!=='open')){toast('Choose open tables to combine.');return;}
     for(const o of group){if(remove)selected.delete(o.id);else selected.add(o.id);}
   }else{selected=remove?new Set():new Set(group.map(o=>o.id));if(partyId)showSidebar('details');else{closeSidebar();if(!remove&&view==='All'){view=t.area;viewFitted=true;viewBox=importedViewBox(view);renderAreas();}}}
-  renderFloor();renderSelection();
+  if(partyId&&!remove&&view==='All'&&group.length)focusTables(group);
+  else renderFloor();
+  renderSelection();
 }
 function tableSymbol(t){
   const cap=t.capacity||0,across=t.orientation==='tb',long=Math.max(38,Math.ceil(cap/2)*14+7);
@@ -448,7 +450,7 @@ function renderSelection(){
   const boothNotice='This combination includes a fixed booth. Confirm the nearby table works for this party and leaves the aisle clear.';
   if(includesBoothCombination(tables))box.append(el('p',{class:'combination-notice'},boothNotice));
   if(party){
-    const button=el('button',{id:'seat-selected-party',class:'primary wide'},tables.length>1?'Combine & seat party':'Seat party');let override=null;
+    const button=el('button',{id:'seat-selected-party',class:'primary wide'},tables.length>1&&!isWholeCombination(state,tables)?'Combine & seat party':'Seat party');let override=null;
     box.append(team.seatingPicker('selected-team-assignment',previousAssignment));
     if(childBoothFit(tables,party.size)){
       const toggle=el('label',{class:'equipment-toggle'});override=el('input',{type:'checkbox',id:'child-override'});override.checked=keepOverride;
@@ -505,8 +507,9 @@ function importedViewBox(value){
  const xs=tables.map(t=>t.x),ys=tables.map(t=>t.y),x=Math.max(0,Math.min(...xs)-45),y=Math.max(0,Math.min(...ys)-45);
  return [x,y,Math.min(1660-x,Math.max(150,Math.max(...xs)-x+45)),Math.min(950-y,Math.max(150,Math.max(...ys)-y+45))];
 }
-function focusTables(tables){view=tables.every(t=>t.area===tables[0].area)?tables[0].area:'All';viewFitted=false;viewBox=tableFocusBox(tables);renderAreas();renderFloor();}
-function setView(value){closeSidebar();view=value;viewFitted=true;const boxes={All:[0,-20,1660,950],Dining:[140,550,1495,360],A:[1300,540,340,350],B:[680,610,665,285],C:[155,610,540,285],'Party rooms':[1000,-10,640,220],'Rose City':[1010,-10,190,200],'Azalea Trail':[1190,-10,210,200],'Piney Woods':[1390,-10,250,230]};viewBox=(state?.background?.imported||state?.areaConfig)?importedViewBox(value):(boxes[value]||boxes.All);renderAreas();if(state)renderFloor();}
+function sectionViewBox(value){const boxes={All:[0,-20,1660,950],Dining:[140,550,1495,360],A:[1300,540,340,350],B:[680,610,665,285],C:[155,610,540,285],'Party rooms':[1000,-10,640,220],'Rose City':[1010,-10,190,200],'Azalea Trail':[1190,-10,210,200],'Piney Woods':[1390,-10,250,230]};return (state?.background?.imported||state?.areaConfig)?importedViewBox(value):(boxes[value]||boxes.All);}
+function focusTables(tables){view=tables.every(t=>t.area===tables[0].area)?tables[0].area:'All';viewFitted=true;viewBox=sectionViewBox(view);renderAreas();renderFloor();}
+function setView(value){closeSidebar();view=value;viewFitted=true;viewBox=sectionViewBox(value);renderAreas();if(state)renderFloor();}
 function renderAreas(){
  const areas=areaOptions(state),labels={All:'Full plan',Dining:'Dining room'};
  for(const a of areas)labels[a.id]=a.name;

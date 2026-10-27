@@ -1,7 +1,11 @@
 import {withinCombinationDistance} from './combinations.js';
+export function isWholeCombination(state,tables){
+ const group=tables[0]?.group;
+ return tables.length>1&&!!group&&tables.every(t=>t.group===group)&&state.tables.filter(t=>t.group===group).length===tables.length;
+}
 export function combineToolbar(state,ids,combining){
- const tables=state.tables.filter(t=>ids.includes(t.id)),group=tables[0]?.group;
- const wholeGroup=!!group&&tables.every(t=>t.group===group)&&state.tables.filter(t=>t.group===group).length===tables.length;
+ const tables=state.tables.filter(t=>ids.includes(t.id));
+ const wholeGroup=isWholeCombination(state,tables);
  if(!combining&&wholeGroup)return {action:'split',label:'Un-combine',disabled:tables.some(t=>t.status==='in_use'||t.roomBlock)};
  if(combining)return {action:'combine',label:`Apply${tables.length?' ('+tables.length+')':''}`,disabled:tables.length<2||tables.length>12||tables.some(t=>t.status!=='open'||t.roomBlock)};
  return {action:'start',label:'Combine',disabled:false};
