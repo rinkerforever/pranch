@@ -73,6 +73,10 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     if(!action.partyId)fail('Choose a waiting party.');
     const held=applyActionCore(state,{type:'bookRoom',roomId:action.roomId,partyId:action.partyId,endsAt:action.endsAt},role,now,uuid);
     return applyActionCore(held,{type:'seatRoom',id:held.roomBlocks.at(-1).id},role,now,uuid);
+  }else if(type==='readyOverlaySettings'){
+    if(!['admin','manager'].includes(role))throw new AppError('Manager access required.',403);
+    if(typeof action.enabled!=='boolean')fail('Choose whether the ready-party overlay is enabled.');
+    state.readyOverlay=action.enabled?{enabled:true,key:state.readyOverlay?.enabled&&state.readyOverlay.key||crypto.randomUUID().replaceAll('-','')+crypto.randomUUID().replaceAll('-','')}:{enabled:false};
   }else if(type==='partyDisplaySettings'){
     if(!['admin','manager'].includes(role))throw new AppError('Manager access required.',403);
     if(typeof action.enabled!=='boolean')fail('Choose whether Party Display is enabled.');
@@ -94,7 +98,7 @@ function applyActionCore(original, action, role, now=Date.now(), uuid=()=>crypto
     if(!['called','away','waiting'].includes(action.contact))fail('Choose a valid guest status.');
     if(action.contact==='called'){if(party.attendance==='away')fail('Return this guest to waiting before calling them.');party.calledAt=now;party.attendance='called';}
     if(action.contact==='away'){party.attendance='away';party.awayAt=now;}
-    if(action.contact==='waiting'){party.attendance='waiting';party.returnedAt=now;delete party.calledAt;delete party.awayAt;}
+    if(action.contact==='waiting'){party.attendance='waiting';party.returnedAt=now;delete party.calledAt;delete party.readyAt;delete party.awayAt;}
   }else if(['saveArea','deleteArea','addRoomCombination','deleteRoomCombination'].includes(type)){
     const areas=structuredClone(areaOptions(state)),combinations=structuredClone(roomCombinations(state));
     const bookings=[...activeRoomBlocks(state),...scheduledRooms(state).filter(b=>b.endsAt>now)];

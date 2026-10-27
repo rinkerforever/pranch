@@ -1,3 +1,4 @@
+import {overlayState,overlayPages,readyOverlayFeed} from './ready-overlay.mjs';
 const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(body), {
   status,
   headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers },
@@ -349,7 +350,8 @@ async function deviceApi(request, env, url) {
     const campaignId = campaignIdFor(display.source_type,display.source_value);
     const campaign = campaignId ? await campaignManifest(campaignId,env) : null;
     return json({ device_id:display.device_id, screen_id:display.screen_id, location_id:display.location_id,
-      desired_source:campaign ? desiredSource : (campaignId ? 'menu' : desiredSource), pages, campaign });
+      desired_source:campaign ? desiredSource : (campaignId ? 'menu' : desiredSource),
+      pages:overlayPages(pages,await overlayState(env,display.location_id),display.location_id,url.origin), campaign });
   }
   return json({ error: 'Not found.' }, 404);
 }
@@ -407,6 +409,7 @@ async function updatePassword(request, env) {
 }
 
 async function api(request, env, url) {
+  if (url.pathname === '/api/ready-overlay') return readyOverlayFeed(request,env,url,json);
   if (url.pathname === '/api/health') {
     return json({ ok: true, service: 'pizza-ranch-control', authConfigured: configured(env) });
   }
@@ -718,6 +721,7 @@ export default {
       else response = await env.ASSETS.fetch(request);
       const headers = new Headers(response.headers);
       for (const [key, value] of Object.entries(securityHeaders)) headers.set(key, value);
+      if (url.pathname === '/ready-display.html') headers.set('content-security-policy',securityHeaders['content-security-policy'] + '; frame-src https:');
       return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
     } catch (error) {
       console.error(error);

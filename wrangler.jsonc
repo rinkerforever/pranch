@@ -7,7 +7,7 @@
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*", "/ready-display.html"]
   },
   "vars": {
     "SUPABASE_URL": "https://ouchrveuiqhzkkyjdhau.supabase.co",

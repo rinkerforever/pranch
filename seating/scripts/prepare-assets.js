@@ -12,6 +12,7 @@ assets.push('accessibility.js','guest.js','join.html');
 assets.push('connection-indicator.js','wait-forecast.js','adaptive-sync.js');
 assets.push('room-display.html','room-display.js','room-display.css','room-display-state.js','party-display-addon.js');
 assets.push('store-settings.js');
+assets.push('ready-overlay-settings.js');
 assets.push('team.js','team-state.js');
 assets.push('combine-toolbar.js');
 assets.push('seating-selection.js');
