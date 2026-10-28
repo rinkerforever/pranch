@@ -412,6 +412,7 @@ function openSeatWholeRoom(chosenParty=partyId,roomId){
 }
 const seatWholeRoomButton=el('button',{class:'primary'},'Seat room');seatWholeRoomButton.onclick=openSeatWholeRoom;$('combine-select').parentElement.prepend(seatWholeRoomButton);
 function renderSelection(){
+ $('workspace').classList.toggle('seating-waiting-party',!editing&&state.parties.some(p=>p.id===partyId&&p.status==='waiting'));
  team.refresh();
  const assignmentKey=JSON.stringify([locationId,partyId,[...selected]]),selectionBox=$('selection-body');
  const previousAssignment=selectionBox.dataset.assignmentKey===assignmentKey?selectionBox.querySelector('#selected-team-assignment select')?.value||'':'';
